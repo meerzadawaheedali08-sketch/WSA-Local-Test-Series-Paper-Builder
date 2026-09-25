@@ -271,10 +271,20 @@ def call_openai_api(api_key, prompt_text, system_instruction="You are an expert 
 # ============================================================
 
 def generate_test_paper(
-    api_key, topic, uploaded_pdf, test_type,
+    api_key, topic, uploaded_pdf, test_type, language,
     mcq_count, short_count, long_count, diff_level
 ):
     pdf_text = process_uploaded_file(uploaded_pdf)
+
+    language_instruction = ""
+    if language == "Urdu":
+        language_instruction = "Generate the complete test paper strictly in URDU language."
+    elif language == "Bilingual (English + Urdu)":
+        language_instruction = (
+            "Generate the test paper in BILINGUAL format (English followed by Urdu translation for each question and option)."
+        )
+    else:
+        language_instruction = "Generate the test paper in ENGLISH language."
 
     prompt = f"""
 Create a professional examination paper.
@@ -282,6 +292,10 @@ Create a professional examination paper.
 TARGET TEST CATEGORY: {test_type}
 TOPIC / SUBJECT: {topic}
 DIFFICULTY LEVEL: {diff_level}
+LANGUAGE MODE: {language}
+
+LANGUAGE REQUIREMENT:
+{language_instruction}
 
 QUESTION COUNTS:
 MCQs: {mcq_count}
@@ -299,7 +313,7 @@ REQUIREMENTS:
     return call_openai_api(
         api_key=api_key,
         prompt_text=prompt,
-        system_instruction="You are an expert examiner for educational boards and competitive testing services.",
+        system_instruction="You are an expert examiner for educational boards and competitive testing services capable of generating test papers in English, Urdu, and Bilingual formats.",
         temperature=0.3
     )
 
@@ -407,7 +421,11 @@ with tab1:
                 "Custom Mock Test"
             ]
         )
-        topic = st.text_input("Topic / Subject", placeholder="e.g., Computer Science")
+        topic = st.text_input("Topic / Subject", placeholder="e.g., Computer Science / Pak Studies")
+        language = st.selectbox(
+            "Language Mode",
+            ["English", "Urdu", "Bilingual (English + Urdu)"]
+        )
         difficulty = st.slider("Difficulty Level", 1, 5, 3)
         diff_labels = {1: "Very Easy", 2: "Easy", 3: "Medium", 4: "Hard", 5: "Very Hard"}
         diff_level = diff_labels[difficulty]
@@ -429,7 +447,7 @@ with tab1:
             with st.spinner("Generating test paper via AI... Please wait."):
                 try:
                     res = generate_test_paper(
-                        api_key, topic, uploaded_pdf, test_type,
+                        api_key, topic, uploaded_pdf, test_type, language,
                         mcq_count, short_count, long_count, diff_level
                     )
                     st.session_state["generated_paper"] = res
