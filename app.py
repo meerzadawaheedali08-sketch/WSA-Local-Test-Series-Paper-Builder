@@ -10,18 +10,88 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="WSA Local Test Series & Paper Builder",
-    page_icon="📝",
+    page_title="WSA Educational Test Series & Paper Builder",
+    page_icon="🎓",
     layout="wide"
 )
 
-# Custom Styling
+# --- MODERN EDUCATIONAL THEME (CUSTOM CSS) ---
 st.markdown("""
 <style>
-    .main-title { font-size: 2.2rem; font-weight: 700; color: #1E3A8A; margin-bottom: 0px; }
-    .sub-title { font-size: 1.05rem; color: #4B5563; margin-bottom: 25px; }
-    .stButton>button { background-color: #1E40AF; color: white; font-weight: bold; border-radius: 6px; }
-    .paper-box { background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 20px; border-radius: 8px; }
+    /* Global background and typography */
+    .stApp {
+        background-color: #F8FAFC;
+    }
+    
+    /* Hero Header Banner */
+    .hero-container {
+        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
+        padding: 28px 32px;
+        border-radius: 12px;
+        color: white;
+        box-shadow: 0 4px 12px rgba(30, 58, 138, 0.15);
+        margin-bottom: 25px;
+    }
+    .hero-title {
+        font-size: 2.3rem;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -0.5px;
+    }
+    .hero-subtitle {
+        font-size: 1.05rem;
+        opacity: 0.9;
+        margin-top: 8px;
+        margin-bottom: 0;
+    }
+    
+    /* Card / Container Styling */
+    .edu-card {
+        background-color: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+        margin-bottom: 20px;
+    }
+    
+    /* Designer Branding Card in Sidebar */
+    .branding-card {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        color: #F8FAFC;
+        padding: 16px;
+        border-radius: 10px;
+        border-left: 4px solid #3B82F6;
+        text-align: center;
+        margin-top: 25px;
+    }
+    .branding-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #60A5FA;
+        margin-bottom: 4px;
+    }
+    .branding-tag {
+        font-size: 0.8rem;
+        color: #94A3B8;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Customizing Primary Buttons */
+    .stButton>button {
+        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+        color: white;
+        font-weight: 600;
+        border-radius: 8px;
+        border: none;
+        padding: 10px 24px;
+        box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+        transition: all 0.2s ease;
+    }
+    .stButton>button:hover {
+        background: linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%);
+        box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,7 +112,7 @@ def extract_pdf_text(uploaded_file):
 
 
 def generate_test_paper(api_key, topic, syllabus_text, test_type, mcq_count, short_count, long_count, diff_level):
-    """Gemini 1.5 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
+    """Gemini 2.5 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
     try:
         client = genai.Client(api_key=api_key)
 
@@ -75,12 +145,13 @@ Structure your output into TWO clearly separated main sections using Markdown fo
 (Provide accurate correct choices for all MCQs, concise point-by-point model answers for Short Questions, and main key evaluation points for Long Questions.)
 """
 
+        # Model name updated to gemini-2.5-flash to fix 404 endpoint errors
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.3,
-                max_output_tokens=3000,
+                max_output_tokens=3500,
             )
         )
         return response.text
@@ -114,8 +185,9 @@ Please provide a structured grading report in clean Markdown:
 4. **Actionable Suggestions**: 2-3 specific recommendations for better test preparation.
 """
 
+        # Model name updated to gemini-2.5-flash
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
@@ -127,20 +199,24 @@ Please provide a structured grading report in clean Markdown:
         return f"Error evaluating submission: {str(e)}"
 
 
-# --- MAIN UI ---
-st.markdown("<p class='main-title'>📝 WSA Local Test Series & Paper Builder</p>", unsafe_allow_html=True)
-st.markdown("<p class='sub-title'>Generate custom mock tests, answer keys, and evaluate student responses with Gemini 1.5 Flash.</p>", unsafe_allow_html=True)
+# --- HERO HEADER ---
+st.markdown("""
+<div class="hero-container">
+    <div class="hero-title">🎓 WSA Local Test Series & Paper Builder</div>
+    <div class="hero-subtitle">Smart AI Exam Suite — Generate Custom Mock Tests, Answer Keys & Automated Student Evaluations</div>
+</div>
+""", unsafe_allow_html=True)
 
-# Sidebar Configuration
+# --- SIDEBAR CONFIGURATION & ABOUT BRANDING ---
 with st.sidebar:
-    st.header("⚙️ API Configuration")
+    st.header("⚙️ System Setup")
     env_api_key = os.getenv("GEMINI_API_KEY", "")
-    user_api_key = st.text_input("Gemini API Key", value=env_api_key, type="password", help="Enter your Gemini API Key or set GEMINI_API_KEY in .env file")
+    user_api_key = st.text_input("Gemini API Key", value=env_api_key, type="password", help="Enter your Gemini API Key or configure it in .env")
     
     st.divider()
-    st.markdown("### 🎯 Exam Type")
+    st.markdown("### 🎯 Exam Category")
     test_type = st.selectbox(
-        "Select Target Exam / Level:",
+        "Select Target Testing Body / Level:",
         [
             "General Competitive Test (CTSP / SBK / NTS)",
             "BPSC Screening & General Knowledge",
@@ -149,43 +225,54 @@ with st.sidebar:
             "Custom Mock Screening Series"
         ]
     )
+    
+    st.divider()
+    
+    # --- ABOUT & DESIGNER BRANDING ---
+    st.markdown("""
+    <div class="branding-card">
+        <div style="font-size: 0.75rem; text-transform: uppercase; color: #94A3B8; letter-spacing: 1px;">Platform Lead</div>
+        <div class="branding-name">Designed by Waheed Ali Hamouzai</div>
+        <div class="branding-tag">WSA Educational Community</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 api_key = user_api_key or os.getenv("GEMINI_API_KEY")
 
-# Navigation Tabs
-tab1, tab2 = st.tabs(["📄 1. Paper Builder", "📊 2. Student Answer Evaluator"])
+# --- NAVIGATION TABS ---
+tab1, tab2 = st.tabs(["📄 1. Test Paper & Answer Key Generator", "📊 2. Student Answer Sheet Evaluator"])
 
 # --- TAB 1: PAPER BUILDER ---
 with tab1:
-    st.subheader("Test Paper Parameters")
+    st.markdown("##### 📝 Configure Exam Parameters")
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
         topic = st.text_input("Subject / Topic Title:", placeholder="e.g. C++ Programming Fundamentals, Everyday Science, General Knowledge")
-        diff_level = st.select_slider("Difficulty Level:", options=["Easy", "Medium", "Hard", "Advanced Competitive"])
+        diff_level = st.select_slider("Select Difficulty Level:", options=["Easy", "Medium", "Hard", "Advanced Competitive"])
         
         uploaded_pdf = st.file_uploader("Upload Syllabus / Chapter PDF (Optional):", type=["pdf"])
         syllabus_text = ""
         if uploaded_pdf:
             syllabus_text = extract_pdf_text(uploaded_pdf)
-            st.success(f"Extracted {len(syllabus_text)} characters from PDF.")
+            st.success(f"Extracted {len(syllabus_text)} characters from reference document.")
 
     with col2:
         st.markdown("**Question Distribution:**")
         mcq_count = st.number_input("Number of MCQs:", min_value=0, max_value=50, value=10)
         short_count = st.number_input("Number of Short Questions:", min_value=0, max_value=20, value=3)
-        long_count = st.number_input("Number of Long/Descriptive Questions:", min_value=0, max_value=10, value=1)
+        long_count = st.number_input("Number of Long / Descriptive Questions:", min_value=0, max_value=10, value=1)
 
     st.divider()
 
-    if st.button("🚀 Generate Question Paper & Answer Key"):
+    if st.button("🚀 Generate Exam Paper & Answer Key"):
         if not api_key:
             st.error("Please provide a Gemini API Key in the sidebar or setup your `.env` file.")
         elif not topic.strip():
             st.warning("Please enter a Subject / Topic Title.")
         else:
-            with st.spinner("Generating Question Paper and Answer Key with Gemini Flash..."):
+            with st.spinner("Generating Question Paper and Answer Key via Gemini 2.5 Flash..."):
                 generated_result = generate_test_paper(
                     api_key=api_key,
                     topic=topic,
@@ -198,12 +285,13 @@ with tab1:
                 )
                 
                 st.session_state["last_generated_paper"] = generated_result
-                st.markdown("### 📋 Generated Paper & Key")
-                st.markdown(generated_result)
                 
-                # Download Button
+                st.markdown("### 📋 Exam Output")
+                st.markdown(f"<div class='edu-card'>{generated_result}</div>", unsafe_allow_html=True)
+                
+                # Download Action
                 st.download_button(
-                    label="📥 Download Paper & Answer Key (.txt)",
+                    label="📥 Download Paper & Key (.txt)",
                     data=generated_result,
                     file_name=f"{topic.replace(' ', '_')}_Test_Paper.txt",
                     mime="text/plain"
@@ -211,41 +299,41 @@ with tab1:
 
 # --- TAB 2: ANSWER EVALUATOR ---
 with tab2:
-    st.subheader("Evaluate Student Submission")
-    st.write("Paste the Question Paper and the Student's Answers below to generate automated grading and feedback.")
+    st.markdown("##### 🔍 Evaluate Student Submissions")
+    st.write("Paste the Question Paper / Marking Key along with the Student's Answers to get an automated grading report.")
     
     eval_col1, eval_col2 = st.columns(2)
     
     with eval_col1:
         default_paper = st.session_state.get("last_generated_paper", "")
         paper_text = st.text_area(
-            "Question Paper / Reference Key:",
+            "Reference Question Paper & Key:",
             value=default_paper,
-            height=250,
-            placeholder="Paste the original question paper or answer key here..."
+            height=280,
+            placeholder="Paste the original question paper or key here..."
         )
         
     with eval_col2:
         student_answers = st.text_area(
-            "Student Submitted Answers:",
-            height=250,
-            placeholder="Paste the student's written or typed responses here (e.g. 1. A, 2. B, Short Ans 1: ...)..."
+            "Student Submitted Responses:",
+            height=280,
+            placeholder="Paste the student's answers here (e.g., 1. A, 2. C, Short Ans 1: ...)..."
         )
         
-    if st.button("🔍 Grade & Evaluate Student Answers"):
+    if st.button("📊 Evaluate Answer Sheet"):
         if not api_key:
             st.error("Please provide a Gemini API Key in the sidebar.")
         elif not paper_text.strip():
-            st.warning("Please provide the reference Question Paper.")
+            st.warning("Please provide the reference Question Paper / Key.")
         elif not student_answers.strip():
             st.warning("Please paste the Student's Submitted Answers.")
         else:
-            with st.spinner("Evaluating student response..."):
+            with st.spinner("Analyzing student responses and generating feedback report..."):
                 evaluation_result = evaluate_student_answers(
                     api_key=api_key,
                     question_paper=paper_text,
                     student_answers=student_answers
                 )
                 
-                st.markdown("### 🎯 Grading Report")
-                st.markdown(evaluation_result)
+                st.markdown("### 🎯 Automated Grading Report")
+                st.markdown(f"<div class='edu-card'>{evaluation_result}</div>", unsafe_allow_html=True)
