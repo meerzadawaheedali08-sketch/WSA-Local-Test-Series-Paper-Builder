@@ -428,9 +428,9 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    env_api_key = os.getenv("OPENAI_API_KEY", "")
+    env_api_key = os.getenv("GEMINI_API_KEY", "")
     api_key_input = st.text_input(
-        "Enter OpenAI API Key (sk-...)",
+        "Enter GEMINI API Key (sk-...)",
         value=env_api_key,
         type="password"
     )
