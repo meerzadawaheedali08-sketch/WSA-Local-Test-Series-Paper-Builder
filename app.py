@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-import PyPDF2 as pdf
+import pypdf
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -18,12 +18,8 @@ st.set_page_config(
 # --- MODERN EDUCATIONAL THEME (CUSTOM CSS) ---
 st.markdown("""
 <style>
-    /* Global background and typography */
-    .stApp {
-        background-color: #F8FAFC;
-    }
+    .stApp { background-color: #F8FAFC; }
     
-    /* Hero Header Banner */
     .hero-container {
         background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
         padding: 28px 32px;
@@ -45,7 +41,6 @@ st.markdown("""
         margin-bottom: 0;
     }
     
-    /* Card / Container Styling */
     .edu-card {
         background-color: #FFFFFF;
         border: 1px solid #E2E8F0;
@@ -55,7 +50,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Designer Branding Card in Sidebar */
     .branding-card {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         color: #F8FAFC;
@@ -77,7 +71,6 @@ st.markdown("""
         letter-spacing: 0.5px;
     }
     
-    /* Customizing Primary Buttons */
     .stButton>button {
         background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
         color: white;
@@ -97,9 +90,9 @@ st.markdown("""
 
 
 def extract_pdf_text(uploaded_file):
-    """PDF file se text extract karne ke liye helper function."""
+    """Try to extract text using pypdf."""
     try:
-        reader = pdf.PdfReader(uploaded_file)
+        reader = pypdf.PdfReader(uploaded_file)
         text = ""
         for page in reader.pages:
             extracted = page.extract_text()
@@ -107,12 +100,11 @@ def extract_pdf_text(uploaded_file):
                 text += extracted + "\n"
         return text.strip()
     except Exception as e:
-        st.error(f"Error reading PDF file: {str(e)}")
         return ""
 
 
-def generate_test_paper(api_key, topic, syllabus_text, test_type, mcq_count, short_count, long_count, diff_level):
-    """Gemini 2.5 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
+def generate_test_paper(api_key, topic, uploaded_pdf, test_type, mcq_count, short_count, long_count, diff_level):
+    """Gemini 3.8 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
     try:
         client = genai.Client(api_key=api_key)
 
@@ -129,10 +121,7 @@ Paper Pattern Requirements:
 - Short Questions: {short_count} questions
 - Long/Descriptive Questions: {long_count} questions
 
-Reference Syllabus / Notes Text:
-\"\"\"
-{syllabus_text if syllabus_text else "Use standard subject knowledge matching the topic and test level."}
-\"\"\"
+Use standard subject knowledge matching the topic, test level, and any attached reference document.
 
 Structure your output into TWO clearly separated main sections using Markdown formatting:
 
@@ -145,10 +134,19 @@ Structure your output into TWO clearly separated main sections using Markdown fo
 (Provide accurate correct choices for all MCQs, concise point-by-point model answers for Short Questions, and main key evaluation points for Long Questions.)
 """
 
-        # Model name updated to gemini-2.5-flash to fix 404 endpoint errors
+        contents = []
+        
+        # Handle PDF attachment (scanned or text)
+        if uploaded_pdf is not None:
+            bytes_data = uploaded_pdf.getvalue()
+            contents.append(types.Part.from_bytes(data=bytes_data, mime_type="application/pdf"))
+            
+        contents.append(prompt)
+
+        # Updated to gemini-3.8-flash
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
+            model='gemini-3.8-flash',
+            contents=contents,
             config=types.GenerateContentConfig(
                 temperature=0.3,
                 max_output_tokens=3500,
@@ -185,9 +183,9 @@ Please provide a structured grading report in clean Markdown:
 4. **Actionable Suggestions**: 2-3 specific recommendations for better test preparation.
 """
 
-        # Model name updated to gemini-2.5-flash
+        # Updated to gemini-3.8-flash
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.2,
@@ -253,10 +251,12 @@ with tab1:
         diff_level = st.select_slider("Select Difficulty Level:", options=["Easy", "Medium", "Hard", "Advanced Competitive"])
         
         uploaded_pdf = st.file_uploader("Upload Syllabus / Chapter PDF (Optional):", type=["pdf"])
-        syllabus_text = ""
         if uploaded_pdf:
-            syllabus_text = extract_pdf_text(uploaded_pdf)
-            st.success(f"Extracted {len(syllabus_text)} characters from reference document.")
+            extracted_text = extract_pdf_text(uploaded_pdf)
+            if len(extracted_text) > 0:
+                st.success(f"Text PDF detected ({len(extracted_text)} characters extracted).")
+            else:
+                st.info("Scanned/Image PDF detected. Sending document directly to Gemini Flash for OCR processing.")
 
     with col2:
         st.markdown("**Question Distribution:**")
@@ -272,11 +272,11 @@ with tab1:
         elif not topic.strip():
             st.warning("Please enter a Subject / Topic Title.")
         else:
-            with st.spinner("Generating Question Paper and Answer Key via Gemini 2.5 Flash..."):
+            with st.spinner("Generating Question Paper and Answer Key via Gemini 3.8 Flash..."):
                 generated_result = generate_test_paper(
                     api_key=api_key,
                     topic=topic,
-                    syllabus_text=syllabus_text,
+                    uploaded_pdf=uploaded_pdf,
                     test_type=test_type,
                     mcq_count=mcq_count,
                     short_count=short_count,
