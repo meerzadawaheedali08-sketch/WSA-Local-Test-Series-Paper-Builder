@@ -6,7 +6,7 @@ import streamlit as st
 import pypdf
 import docx
 
-from google import genai
+from openai import OpenAI  # <-- Replaced google.genai with openai
 from dotenv import load_dotenv
 
 # PDF Generation Imports
@@ -122,7 +122,7 @@ st.markdown(
 
 
 # ============================================================
-# PDF GENERATOR FUNCTION (WITH APP & USER BRANDING)
+# PDF GENERATOR FUNCTION
 # ============================================================
 
 def create_pdf_from_text(title, content):
@@ -139,7 +139,6 @@ def create_pdf_from_text(title, content):
 
     styles = getSampleStyleSheet()
 
-    # Branding & Header Styles
     app_meta_style = ParagraphStyle(
         'AppMetaStyle',
         parent=styles['Normal'],
@@ -176,7 +175,6 @@ def create_pdf_from_text(title, content):
         spaceBefore=15
     )
 
-    # 1. Header Metadata & Title
     story = [
         Paragraph("<b>Generated via WSA Educational Test Series &amp; Paper Builder (AI-Powered)</b>", app_meta_style),
         Spacer(1, 4),
@@ -184,7 +182,6 @@ def create_pdf_from_text(title, content):
         Spacer(1, 10)
     ]
 
-    # 2. Main Content Formatting
     lines = content.split('\n')
     for line in lines:
         clean_line = line.strip()
@@ -198,7 +195,6 @@ def create_pdf_from_text(title, content):
         else:
             story.append(Spacer(1, 6))
 
-    # 3. Footer Branding & Credit
     story.append(Spacer(1, 15))
     story.append(Paragraph("_________________________________________________________________________________", app_meta_style))
     story.append(Paragraph("<b>Designed by Waheed Ali Hamouzai</b> • WSA Educational Community", footer_style))
@@ -214,23 +210,23 @@ def create_pdf_from_text(title, content):
 
 def process_uploaded_file(uploaded_file):
     if uploaded_file is None:
-        return "", None
+        return ""
 
     filename = uploaded_file.name.lower()
 
     if filename.endswith(".txt"):
         try:
-            return uploaded_file.getvalue().decode("utf-8").strip(), None
+            return uploaded_file.getvalue().decode("utf-8").strip()
         except Exception:
-            return "", None
+            return ""
 
     elif filename.endswith(".docx"):
         try:
             doc = docx.Document(uploaded_file)
             full_text = [p.text for p in doc.paragraphs if p.text]
-            return "\n".join(full_text).strip(), None
+            return "\n".join(full_text).strip()
         except Exception:
-            return "", None
+            return ""
 
     elif filename.endswith(".pdf"):
         text = ""
@@ -244,76 +240,30 @@ def process_uploaded_file(uploaded_file):
         except Exception:
             text = ""
 
-        if text:
-            if len(text) > 15000:
-                text = text[:15000]
-            return text, None
-        else:
-            uploaded_file.seek(0)
-            return "", {
-                "mime_type": "application/pdf",
-                "data": uploaded_file.getvalue()
-            }
+        if len(text) > 15000:
+            text = text[:15000]
+        return text
 
-    elif filename.endswith((".png", ".jpg", ".jpeg")):
-        mime_type = "image/png" if filename.endswith(".png") else "image/jpeg"
-        uploaded_file.seek(0)
-        return "", {
-            "mime_type": mime_type,
-            "data": uploaded_file.getvalue()
-        }
-
-    return "", None
+    return ""
 
 
 # ============================================================
-# GEMINI API CALL WITH FALLBACK
+# OPENAI API CALL FUNCTION
 # ============================================================
 
-def call_gemini_with_retry(
-    api_key,
-    prompt_text,
-    file_attachments=None,
-    temperature=0.3
-):
-    client = genai.Client(api_key=api_key)
-
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
-    ]
-
-    last_error = ""
-
-    for model_name in candidate_models:
-        try:
-            contents = []
-            if file_attachments:
-                for attachment in file_attachments:
-                    if attachment:
-                        contents.append(attachment)
-
-            contents.append(prompt_text)
-
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config={"temperature": temperature}
-            )
-
-            if response and response.text:
-                return response.text
-
-        except Exception as e:
-            last_error = str(e)
-            if "404" in last_error or "NOT_FOUND" in last_error or "not found" in last_error.lower():
-                continue
-            time.sleep(1)
-
-    raise Exception(
-        f"Model connection failed. Check API Key.\n\nError: {last_error}"
+def call_openai_api(api_key, prompt_text, system_instruction="You are an expert educational examiner.", temperature=0.3):
+    client = OpenAI(api_key=api_key)
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # Highly capable & cost-effective
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt_text}
+        ],
+        temperature=temperature
     )
+    
+    return response.choices[0].message.content
 
 
 # ============================================================
@@ -324,12 +274,9 @@ def generate_test_paper(
     api_key, topic, uploaded_pdf, test_type,
     mcq_count, short_count, long_count, diff_level
 ):
-    pdf_text, pdf_part = process_uploaded_file(uploaded_pdf)
-    file_attachments = [pdf_part] if pdf_part else None
+    pdf_text = process_uploaded_file(uploaded_pdf)
 
     prompt = f"""
-You are an expert examiner for educational boards in Pakistan.
-
 Create a professional examination paper.
 
 TARGET TEST CATEGORY: {test_type}
@@ -349,34 +296,25 @@ REQUIREMENTS:
 {f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""}
 """
 
-    return call_gemini_with_retry(
+    return call_openai_api(
         api_key=api_key,
         prompt_text=prompt,
-        file_attachments=file_attachments,
+        system_instruction="You are an expert examiner for educational boards and competitive testing services in Pakistan.",
         temperature=0.3
     )
 
 
 def evaluate_student_answers(
-    api_key, paper_text, paper_attachment,
-    answers_text, answers_attachment
+    api_key, paper_text, answers_text
 ):
-    file_attachments = []
-    if paper_attachment:
-        file_attachments.append(paper_attachment)
-    if answers_attachment:
-        file_attachments.append(answers_attachment)
-
     prompt = f"""
-You are an experienced examiner.
-
 Evaluate the student's answer sheet against the provided question paper and answer key.
 
 QUESTION PAPER / ANSWER KEY:
-{paper_text if paper_text else "Attached as file/image."}
+{paper_text}
 
 STUDENT ANSWERS:
-{answers_text if answers_text else "Attached as file/image."}
+{answers_text}
 
 Provide a structured evaluation report:
 - Total Marks & Obtained Marks
@@ -385,10 +323,10 @@ Provide a structured evaluation report:
 - Strengths & Weaknesses
 """
 
-    return call_gemini_with_retry(
+    return call_openai_api(
         api_key=api_key,
         prompt_text=prompt,
-        file_attachments=file_attachments if file_attachments else None,
+        system_instruction="You are an experienced strict examiner evaluating student answers.",
         temperature=0.2
     )
 
@@ -399,9 +337,9 @@ Provide a structured evaluation report:
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    env_api_key = os.getenv("GEMINI_API_KEY", "")
+    env_api_key = os.getenv("OPENAI_API_KEY", "")
     api_key_input = st.text_input(
-        "Enter Gemini API Key",
+        "Enter OpenAI API Key (sk-...)",
         value=env_api_key,
         type="password"
     )
@@ -454,11 +392,11 @@ with tab1:
 
     if st.button("🚀 Generate Test Paper", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter API key.")
+            st.error("⚠️ Please enter OpenAI API key.")
         elif not topic.strip():
             st.error("⚠️ Please enter topic.")
         else:
-            with st.spinner("Generating test paper..."):
+            with st.spinner("Generating test paper via ChatGPT..."):
                 try:
                     res = generate_test_paper(
                         api_key, topic, uploaded_pdf, test_type,
@@ -494,7 +432,7 @@ with tab1:
 
 
 # ============================================================
-# TAB 2 — EVALUATE ANSWERS (TEXT + PDF DOWNLOAD)
+# TAB 2 — EVALUATE ANSWERS
 # ============================================================
 
 with tab2:
@@ -506,49 +444,49 @@ with tab2:
     with col_paper:
         st.markdown("### 1️⃣ Question Paper / Answer Key")
         paper_file = st.file_uploader(
-            "Upload Paper (PDF, DOCX, TXT, Image)",
-            type=["pdf", "docx", "txt", "png", "jpg", "jpeg"],
+            "Upload Paper (PDF, DOCX, TXT)",
+            type=["pdf", "docx", "txt"],
             key="p_up"
         )
         question_paper_text = st.text_area(
             "Or Paste Text",
             value=default_paper,
             height=200,
-            key="q_paper_text"  # <-- Added unique key
+            key="q_paper_text"
         )
 
     with col_answer:
         st.markdown("### 2️⃣ Student Answer Sheet")
         student_file = st.file_uploader(
-            "Upload Answers (PDF, DOCX, TXT, Image)",
-            type=["pdf", "docx", "txt", "png", "jpg", "jpeg"],
+            "Upload Answers (PDF, DOCX, TXT)",
+            type=["pdf", "docx", "txt"],
             key="s_up"
         )
         student_answers_text = st.text_area(
             "Or Paste Text",
             height=200,
-            key="s_answers_text"  # <-- Added unique key
+            key="s_answers_text"
         )
 
     if st.button("📊 Evaluate Answers", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter API key.")
+            st.error("⚠️ Please enter OpenAI API key.")
         else:
-            p_text, p_part = process_uploaded_file(paper_file)
+            p_text = process_uploaded_file(paper_file)
             final_p_text = p_text or question_paper_text.strip()
 
-            a_text, a_part = process_uploaded_file(student_file)
+            a_text = process_uploaded_file(student_file)
             final_a_text = a_text or student_answers_text.strip()
 
-            if not (final_p_text or p_part):
+            if not final_p_text:
                 st.error("⚠️ Question paper is missing.")
-            elif not (final_a_text or a_part):
+            elif not final_a_text:
                 st.error("⚠️ Student answers are missing.")
             else:
-                with st.spinner("Evaluating student answers..."):
+                with st.spinner("Evaluating student answers via ChatGPT..."):
                     try:
                         eval_res = evaluate_student_answers(
-                            api_key, final_p_text, p_part, final_a_text, a_part
+                            api_key, final_p_text, final_a_text
                         )
                         st.session_state["evaluation"] = eval_res
                     except Exception as e:
