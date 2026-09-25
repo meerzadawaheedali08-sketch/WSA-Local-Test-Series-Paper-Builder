@@ -155,7 +155,7 @@ def call_gemini_with_retry(
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.4-flash",
+                model="gemini-2.6-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
