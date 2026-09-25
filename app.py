@@ -420,18 +420,6 @@ Suggestions:
 # SIDEBAR
 # ============================================================
 
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.subheader("Gemini API")
-
-    env_api_key = os.getenv("GEMINI_API_KEY", "")
-    api_key_input = st.text_input(
-        "Enter Gemini API Key",
-        value=env_api_key,
-        type="password",
-        placeholder="AIza..."
-    )
-
     api_key = api_key_input or env_api_key
 
     st.divider()
@@ -527,7 +515,7 @@ with tab1:
         mcq_count = st.number_input(
             "Number of MCQs",
             min_value=0,
-            max_value=50,
+            max_value=60,
             value=10,
             step=1
         )
