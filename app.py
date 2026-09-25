@@ -3,9 +3,9 @@ import time
 
 import streamlit as st
 import pypdf
+import docx
 
 from google import genai
-from google.genai import types
 from dotenv import load_dotenv
 
 
@@ -120,97 +120,128 @@ st.markdown(
 
 
 # ============================================================
-# PDF TEXT EXTRACTION
+# HELPER FUNCTIONS FOR FILE EXTRACTION & HANDLING
 # ============================================================
 
-def extract_pdf_text(uploaded_file):
-    """Extract text from uploaded PDF."""
-    try:
-        reader = pypdf.PdfReader(uploaded_file)
+def process_uploaded_file(uploaded_file):
+    """
+    Extracts text from PDF/DOCX/TXT files or returns raw binary data
+    with MIME type for Gemini Multimodal API (Image / Scanned PDF).
+    """
+    if uploaded_file is None:
+        return "", None
+
+    filename = uploaded_file.name.lower()
+
+    # 1. Plain Text File (.txt)
+    if filename.endswith(".txt"):
+        try:
+            return uploaded_file.getvalue().decode("utf-8").strip(), None
+        except Exception:
+            return "", None
+
+    # 2. Word Document (.docx)
+    elif filename.endswith(".docx"):
+        try:
+            doc = docx.Document(uploaded_file)
+            full_text = [p.text for p in doc.paragraphs if p.text]
+            return "\n".join(full_text).strip(), None
+        except Exception:
+            return "", None
+
+    # 3. PDF File (.pdf)
+    elif filename.endswith(".pdf"):
         text = ""
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-        return text.strip()
-    except Exception:
-        return ""
+        try:
+            reader = pypdf.PdfReader(uploaded_file)
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+            text = text.strip()
+        except Exception:
+            text = ""
+
+        # If text extracted successfully, return it
+        if text:
+            if len(text) > 15000:
+                text = text[:15000]
+            return text, None
+        else:
+            # Scanned PDF Fallback (Pass bytes directly for OCR)
+            uploaded_file.seek(0)
+            return "", {
+                "mime_type": "application/pdf",
+                "data": uploaded_file.getvalue()
+            }
+
+    # 4. Images (.png, .jpg, .jpeg)
+    elif filename.endswith((".png", ".jpg", ".jpeg")):
+        mime_type = "image/png" if filename.endswith(".png") else "image/jpeg"
+        uploaded_file.seek(0)
+        return "", {
+            "mime_type": mime_type,
+            "data": uploaded_file.getvalue()
+        }
+
+    return "", None
 
 
 # ============================================================
-# GEMINI API CALL WITH ROBUST FALLBACK & AUTO-DISCOVERY
+# GEMINI API CALL WITH RELIABLE FALLBACK
 # ============================================================
 
 def call_gemini_with_retry(
-    client,
-    contents,
-    temperature=0.3,
-    max_tokens=3500,
-    retries=2
+    api_key,
+    prompt_text,
+    file_attachments=None,
+    temperature=0.3
 ):
     """
-    Call Gemini API with robust model fallback using the new google-genai SDK.
+    Call Gemini API using official SDK with multi-model fallback.
     """
-    # Active Gemini model identifier list for the google-genai SDK
+    client = genai.Client(api_key=api_key)
+
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-2.5-pro"
+        "gemini-1.5-flash"
     ]
 
-    last_error_message = ""
+    last_error = ""
 
     for model_name in candidate_models:
-        for attempt in range(retries):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens
-                    )
-                )
+        try:
+            contents = []
 
-                if response and response.text:
-                    return response.text
+            # Append any binary file parts (Images / Scanned PDFs)
+            if file_attachments:
+                for attachment in file_attachments:
+                    if attachment:
+                        contents.append(attachment)
 
-            except Exception as e:
-                error_text = str(e)
-                last_error_message = error_text
+            # Append Prompt Text
+            contents.append(prompt_text)
 
-                # Invalid API Key / Authentication Error -> Fail fast
-                if "API_KEY_INVALID" in error_text or "403" in error_text or "PermissionDenied" in error_text:
-                    raise Exception(
-                        "❌ Invalid API Key! Kripya Google AI Studio se sahi API Key copy karke Enter karein."
-                    )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config={
+                    "temperature": temperature
+                }
+            )
 
-                # If 404/NOT_FOUND -> Move immediately to the next candidate model
-                if "404" in error_text or "NOT_FOUND" in error_text or "not found" in error_text.lower():
-                    break
+            if response and response.text:
+                return response.text
 
-                # Rate Limit / Transient Error -> Retry with exponential backoff
-                temporary_error = (
-                    "429" in error_text
-                    or "503" in error_text
-                    or "UNAVAILABLE" in error_text
-                    or "RESOURCE_EXHAUSTED" in error_text
-                    or "rate limit" in error_text.lower()
-                )
+        except Exception as e:
+            last_error = str(e)
+            if "404" in last_error or "NOT_FOUND" in last_error or "not found" in last_error.lower():
+                continue
+            time.sleep(1)
 
-                if temporary_error and attempt < retries - 1:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-
-    # Final Exception Handler with User Instructions
     raise Exception(
-        f"API Connection Failed!\n\n"
-        f"Kripya niche diye gaye steps check karein:\n"
-        f"1. **API Key Verify Karein:** Google AI Studio (aistudio.google.com) par jakar new API key generate karein.\n"
-        f"2. **Project Billing / Quota:** Check karein ki aapke Google account par Free Tier Quota limit end toh nahi ho gayi.\n"
-        f"3. **Network Connection:** Apna Internet connection check karein.\n\n"
-        f"Error Details: {last_error_message}"
+        f"Model connection failed. Google AI Studio se new API key check karein.\n\nError: {last_error}"
     )
 
 
@@ -228,120 +259,38 @@ def generate_test_paper(
     long_count,
     diff_level
 ):
-    """
-    Generate complete question paper and answer key.
-    Handles both normal text PDFs and scanned image PDFs.
-    """
-    client = genai.Client(api_key=api_key)
-    contents = []
-
-    pdf_text = ""
-    if uploaded_pdf is not None:
-        pdf_text = extract_pdf_text(uploaded_pdf)
-        if len(pdf_text) > 20000:
-            pdf_text = pdf_text[:20000]
-
-        # Scanned PDF Fallback: Direct Part attachment for OCR
-        if not pdf_text:
-            uploaded_pdf.seek(0)
-            bytes_data = uploaded_pdf.getvalue()
-            contents.append(
-                types.Part.from_bytes(
-                    data=bytes_data,
-                    mime_type="application/pdf"
-                )
-            )
+    pdf_text, pdf_part = process_uploaded_file(uploaded_pdf)
+    file_attachments = [pdf_part] if pdf_part else None
 
     prompt = f"""
-You are an expert examiner for competitive testing agencies
-and educational boards in Balochistan and Pakistan.
+You are an expert examiner for competitive testing agencies and educational boards in Pakistan.
 
 Create a professional examination paper.
 
-TARGET TEST CATEGORY / ROLE:
-{test_type}
-
-TOPIC / SUBJECT:
-{topic}
-
-DIFFICULTY LEVEL:
-{diff_level}
+TARGET TEST CATEGORY / ROLE: {test_type}
+TOPIC / SUBJECT: {topic}
+DIFFICULTY LEVEL: {diff_level}
 
 QUESTION COUNTS:
 MCQs: {mcq_count}
 SHORT QUESTIONS: {short_count}
 LONG / DESCRIPTIVE QUESTIONS: {long_count}
 
-IMPORTANT REQUIREMENTS:
-1. MCQs must have exactly four options: A, B, C and D.
-2. Every question must be relevant to the selected topic.
-3. Match the requested difficulty level.
-4. Avoid duplicate questions.
-5. MCQs must have only one clearly correct answer.
-6. Short questions should require concise answers.
-7. Long questions should require detailed answers.
-8. Provide a complete answer key.
-9. Keep the paper professional and suitable for Pakistani educational or competitive testing.
-10. If reference material is provided below or as an attached PDF, use it as the primary source.
-11. Clearly separate the QUESTION PAPER from the ANSWER KEY.
+REQUIREMENTS:
+1. MCQs must have four options (A, B, C, D) with 1 correct option.
+2. Provide short questions and long questions as requested.
+3. Provide a complete ANSWER KEY at the bottom.
+4. Keep the paper clean and professional.
 
-REQUIRED OUTPUT FORMAT:
-
-========================================
-WSA EDUCATIONAL TEST SERIES
-========================================
-
-TEST CATEGORY: {test_type}
-TOPIC: {topic}
-DIFFICULTY: {diff_level}
-
-========================================
-SECTION A — MCQs
-========================================
-1. Question
-   A) Option
-   B) Option
-   C) Option
-   D) Option
-
-========================================
-SECTION B — SHORT QUESTIONS
-========================================
-1. Question
-
-========================================
-SECTION C — LONG QUESTIONS
-========================================
-1. Question
-
-========================================
-ANSWER KEY
-========================================
-
-MCQs:
-1. A
-
-SHORT QUESTIONS:
-1. Model Answer:
-
-LONG QUESTIONS:
-1. Model Answer:
-
-REFERENCE MATERIAL FROM TEXT:
-{pdf_text if pdf_text else "Attached PDF processed directly via Vision/OCR."}
+{f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""}
 """
 
-    contents.append(prompt)
-
-    result = call_gemini_with_retry(
-        client=client,
-        contents=contents,
-        temperature=0.3,
-        max_tokens=6000,
-        retries=2
+    return call_gemini_with_retry(
+        api_key=api_key,
+        prompt_text=prompt,
+        file_attachments=file_attachments,
+        temperature=0.3
     )
-
-    return result
 
 
 # ============================================================
@@ -350,103 +299,71 @@ REFERENCE MATERIAL FROM TEXT:
 
 def evaluate_student_answers(
     api_key,
-    question_paper,
-    student_answers
+    paper_text,
+    paper_attachment,
+    answers_text,
+    answers_attachment
 ):
-    """
-    Evaluate student answers using Gemini.
-    """
-    client = genai.Client(api_key=api_key)
+    file_attachments = []
+    if paper_attachment:
+        file_attachments.append(paper_attachment)
+    if answers_attachment:
+        file_attachments.append(answers_attachment)
 
     prompt = f"""
-You are an experienced examiner.
+You are an experienced examiner and paper grader.
 
-Evaluate the student's answers against the
-provided question paper and answer key.
+Evaluate the student's answer sheet against the provided question paper and answer key.
 
-QUESTION PAPER:
-{question_paper}
+QUESTION PAPER / ANSWER KEY CONTENT:
+{paper_text if paper_text else "Question Paper attached as document/image."}
 
-STUDENT ANSWERS:
-{student_answers}
+STUDENT ANSWERS CONTENT:
+{answers_text if answers_text else "Student answers attached as document/image."}
 
-Provide the evaluation in this format:
+Provide a comprehensive, objective, and clear evaluation using this exact structure:
 
 ========================================
-STUDENT EVALUATION
+STUDENT EVALUATION SUMMARY
 ========================================
-
 Total Marks:
 Obtained Marks:
 Percentage:
-Performance:
+Grade / Performance:
 
 ========================================
-QUESTION-WISE EVALUATION
+QUESTION-WISE BREAKDOWN
 ========================================
-
-Question 1:
-Correct / Incorrect / Partially Correct
-
-Marks:
-Explanation:
+(For each question present in the paper)
+1. Question:
+   Status: Correct / Partially Correct / Incorrect
+   Marks Awarded:
+   Feedback / Explanation:
 
 ========================================
-FINAL FEEDBACK
+STRENGTHS & WEAKNESSES
 ========================================
-
 Strengths:
 - 
 
-Weak Areas:
+Areas for Improvement:
 - 
 
-Suggestions:
+Suggestions for Improvement:
 - 
 """
 
-    result = call_gemini_with_retry(
-        client=client,
-        contents=[prompt],
-        temperature=0.2,
-        max_tokens=5000,
-        retries=2
+    return call_gemini_with_retry(
+        api_key=api_key,
+        prompt_text=prompt,
+        file_attachments=file_attachments if file_attachments else None,
+        temperature=0.2
     )
-
-    return result
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
-
-    api_key = api_key_input or env_api_key
-
-    st.divider()
-
-    st.subheader("About")
-    st.write(
-        "WSA Educational Test Series & Paper Builder "
-        "is an AI-powered educational tool for creating "
-        "practice papers and evaluating student answers."
-    )
-    st.info(
-        "Your Gemini API key is used only for generating "
-        "and evaluating content."
-    )
-
-
-# ============================================================
-# HERO SECTION
-# ============================================================
-
-st.markdown(
-    """<div class="hero-container">
-<div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
-<div class="hero-subtitle">AI-powered exam paper generation, practice testing and answer evaluation.</div>
-</div>""",
-    unsafe_allow_html=True
-)
 
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -460,6 +377,24 @@ with st.sidebar:
         placeholder="AIza..."
     )
 
+    api_key = api_key_input or env_api_key
+
+    st.divider()
+    st.subheader("About")
+    st.write("WSA Educational Test Series & Paper Builder")
+
+
+# ============================================================
+# HERO SECTION
+# ============================================================
+
+st.markdown(
+    """<div class="hero-container">
+<div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
+<div class="hero-subtitle">AI-powered exam paper generation and student answer evaluation.</div>
+</div>""",
+    unsafe_allow_html=True
+)
 
 
 # ============================================================
@@ -480,7 +415,6 @@ tab1, tab2 = st.tabs(
 
 with tab1:
     st.markdown('<div class="edu-card">', unsafe_allow_html=True)
-
     st.subheader("Create New Test Paper")
 
     col1, col2 = st.columns(2)
@@ -499,106 +433,54 @@ with tab1:
 
         topic = st.text_input(
             "Topic / Subject",
-            placeholder="Example: Computer Science, English Grammar, Pakistan Studies"
+            placeholder="Example: Computer Science, English Grammar"
         )
 
-        difficulty = st.slider(
-            "Difficulty Level",
-            min_value=1,
-            max_value=5,
-            value=3
-        )
-
-        difficulty_labels = {
-            1: "Very Easy",
-            2: "Easy",
-            3: "Medium",
-            4: "Hard",
-            5: "Very Hard"
-        }
-
-        diff_level = difficulty_labels[difficulty]
+        difficulty = st.slider("Difficulty Level", 1, 5, 3)
+        diff_labels = {1: "Very Easy", 2: "Easy", 3: "Medium", 4: "Hard", 5: "Very Hard"}
+        diff_level = diff_labels[difficulty]
 
     with col2:
         uploaded_pdf = st.file_uploader(
-            "Upload Syllabus / Chapter PDF (Optional)",
-            type=["pdf"]
+            "Upload Syllabus / Reference Document (PDF, DOCX, TXT)",
+            type=["pdf", "docx", "txt"]
         )
-
-        mcq_count = st.number_input(
-            "Number of MCQs",
-            min_value=0,
-            max_value=60,
-            value=10,
-            step=1
-        )
-
-        short_count = st.number_input(
-            "Number of Short Questions",
-            min_value=0,
-            max_value=20,
-            value=5,
-            step=1
-        )
-
-        long_count = st.number_input(
-            "Number of Long Questions",
-            min_value=0,
-            max_value=10,
-            value=2,
-            step=1
-        )
+        mcq_count = st.number_input("Number of MCQs", 0, 50, 10)
+        short_count = st.number_input("Number of Short Questions", 0, 20, 5)
+        long_count = st.number_input("Number of Long Questions", 0, 10, 2)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    generate_button = st.button(
-        "🚀 Generate Test Paper",
-        use_container_width=True
-    )
-
-    if generate_button:
+    if st.button("🚀 Generate Test Paper", use_container_width=True):
         if not api_key:
             st.error("⚠️ Please enter your Gemini API key in the sidebar.")
         elif not topic.strip():
-            st.error("⚠️ Please enter a topic or subject.")
-        elif mcq_count == 0 and short_count == 0 and long_count == 0:
-            st.error("⚠️ Please select at least one question count.")
+            st.error("⚠️ Please enter a topic.")
         else:
-            with st.spinner("Generating your test paper..."):
+            with st.spinner("Generating test paper..."):
                 try:
-                    generated_result = generate_test_paper(
-                        api_key=api_key,
-                        topic=topic,
-                        uploaded_pdf=uploaded_pdf,
-                        test_type=test_type,
-                        mcq_count=mcq_count,
-                        short_count=short_count,
-                        long_count=long_count,
-                        diff_level=diff_level
+                    res = generate_test_paper(
+                        api_key, topic, uploaded_pdf, test_type,
+                        mcq_count, short_count, long_count, diff_level
                     )
-
-                    st.session_state["generated_paper"] = generated_result
-
+                    st.session_state["generated_paper"] = res
                 except Exception as e:
-                    st.error("❌ Failed to Generate Test Paper")
-                    st.warning(str(e))
+                    st.error(f"❌ Error: {e}")
 
     if "generated_paper" in st.session_state:
         st.divider()
         st.subheader("📄 Generated Test Paper")
         st.markdown(st.session_state["generated_paper"])
-
         st.download_button(
-            label="⬇️ Download Test Paper",
-            data=st.session_state["generated_paper"],
+            "⬇️ Download Paper",
+            st.session_state["generated_paper"],
             file_name="WSA_Test_Paper.txt",
-            mime="text/plain",
             use_container_width=True
         )
 
 
 # ============================================================
-# TAB 2 — EVALUATE ANSWERS
+# TAB 2 — EVALUATE ANSWERS (UPDATED WITH FILE UPLOADS)
 # ============================================================
 
 with tab2:
@@ -606,45 +488,68 @@ with tab2:
 
     default_paper = st.session_state.get("generated_paper", "")
 
-    question_paper = st.text_area(
-        "Paste Question Paper / Answer Key",
-        value=default_paper,
-        height=300,
-        placeholder="Paste the generated question paper and answer key here..."
-    )
+    col_paper, col_answer = st.columns(2)
 
-    student_answers = st.text_area(
-        "Paste Student Answers",
-        height=300,
-        placeholder="Paste the student's answers here..."
-    )
+    with col_paper:
+        st.markdown("### 1️⃣ Question Paper / Answer Key")
+        paper_file = st.file_uploader(
+            "Upload Question Paper / Answer Key (PDF, DOCX, TXT, Image)",
+            type=["pdf", "docx", "txt", "png", "jpg", "jpeg"],
+            key="paper_uploader"
+        )
+        question_paper_text = st.text_area(
+            "Or Paste Question Paper / Answer Key Text Here",
+            value=default_paper,
+            height=250,
+            placeholder="Paste text if you don't upload a file..."
+        )
 
-    evaluate_button = st.button(
-        "📊 Evaluate Answers",
-        use_container_width=True
-    )
+    with col_answer:
+        st.markdown("### 2️⃣ Student Answer Sheet")
+        student_file = st.file_uploader(
+            "Upload Student Answer Sheet (PDF, DOCX, TXT, Image)",
+            type=["pdf", "docx", "txt", "png", "jpg", "jpeg"],
+            key="student_uploader"
+        )
+        student_answers_text = st.text_area(
+            "Or Paste Student Answers Text Here",
+            height=250,
+            placeholder="Paste student answers if you don't upload a file..."
+        )
 
-    if evaluate_button:
+    if st.button("📊 Evaluate Answers", use_container_width=True):
         if not api_key:
             st.error("⚠️ Please enter your Gemini API key in the sidebar.")
-        elif not question_paper.strip():
-            st.error("⚠️ Please paste the question paper.")
-        elif not student_answers.strip():
-            st.error("⚠️ Please paste the student's answers.")
         else:
-            with st.spinner("Evaluating student answers..."):
-                try:
-                    evaluation = evaluate_student_answers(
-                        api_key=api_key,
-                        question_paper=question_paper,
-                        student_answers=student_answers
-                    )
+            # Process Paper Input
+            paper_extracted_text, paper_part = process_uploaded_file(paper_file)
+            final_paper_text = paper_extracted_text or question_paper_text.strip()
 
-                    st.session_state["evaluation"] = evaluation
+            # Process Answer Input
+            answer_extracted_text, answer_part = process_uploaded_file(student_file)
+            final_answer_text = answer_extracted_text or student_answers_text.strip()
 
-                except Exception as e:
-                    st.error("❌ Failed to Evaluate Answers")
-                    st.warning(str(e))
+            # Validation
+            has_paper = bool(final_paper_text or paper_part)
+            has_answer = bool(final_answer_text or answer_part)
+
+            if not has_paper:
+                st.error("⚠️ Please upload or paste the Question Paper / Answer Key.")
+            elif not has_answer:
+                st.error("⚠️ Please upload or paste the Student's Answers.")
+            else:
+                with st.spinner("Evaluating student answers using AI..."):
+                    try:
+                        eval_res = evaluate_student_answers(
+                            api_key=api_key,
+                            paper_text=final_paper_text,
+                            paper_attachment=paper_part,
+                            answers_text=final_answer_text,
+                            answers_attachment=answer_part
+                        )
+                        st.session_state["evaluation"] = eval_res
+                    except Exception as e:
+                        st.error(f"❌ Evaluation Error: {e}")
 
     if "evaluation" in st.session_state:
         st.divider()
@@ -652,7 +557,7 @@ with tab2:
         st.markdown(st.session_state["evaluation"])
 
         st.download_button(
-            label="⬇️ Download Evaluation",
+            label="⬇️ Download Evaluation Report",
             data=st.session_state["evaluation"],
             file_name="WSA_Student_Evaluation.txt",
             mime="text/plain",
