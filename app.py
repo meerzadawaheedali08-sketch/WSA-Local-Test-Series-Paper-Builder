@@ -34,7 +34,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-
         .stApp {
             background-color: #F8FAFC;
         }
@@ -45,7 +44,6 @@ st.markdown(
                 #1E3A8A 0%,
                 #3B82F6 100%
             );
-
             padding: 28px 32px;
             border-radius: 12px;
             color: white;
@@ -82,7 +80,6 @@ st.markdown(
                 #0F172A 0%,
                 #1E293B 100%
             );
-
             color: #F8FAFC;
             padding: 16px;
             border-radius: 10px;
@@ -110,14 +107,12 @@ st.markdown(
                 #2563EB 0%,
                 #1D4ED8 100%
             );
-
             color: white;
             font-weight: 600;
             border-radius: 8px;
             border: none;
             padding: 10px 24px;
         }
-
     </style>
     """,
     unsafe_allow_html=True
@@ -157,7 +152,6 @@ def call_gemini_with_retry(
     Call Gemini API with automatic retry
     for temporary errors and robust model fallback.
     """
-
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
@@ -212,7 +206,6 @@ def generate_test_paper(
     Generate complete question paper and answer key.
     Handles both normal text PDFs and scanned image PDFs.
     """
-
     client = genai.Client(api_key=api_key)
     contents = []
 
@@ -337,7 +330,6 @@ def evaluate_student_answers(
     """
     Evaluate student answers using Gemini.
     """
-
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
@@ -403,9 +395,7 @@ Suggestions:
 # ============================================================
 
 with st.sidebar:
-
     st.header("⚙️ Settings")
-
     st.subheader("Gemini API")
 
     env_api_key = os.getenv("GEMINI_API_KEY", "")
@@ -421,13 +411,11 @@ with st.sidebar:
     st.divider()
 
     st.subheader("About")
-
     st.write(
         "WSA Educational Test Series & Paper Builder "
         "is an AI-powered educational tool for creating "
         "practice papers and evaluating student answers."
     )
-
     st.info(
         "Your Gemini API key is used only for generating "
         "and evaluating content."
@@ -439,19 +427,10 @@ with st.sidebar:
 # ============================================================
 
 st.markdown(
-    """
-    <div class="hero-container">
-
-        <div class="hero-title">
-            🎓 WSA Educational Test Series & Paper Builder
-        </div>
-
-        <div class="hero-subtitle">
-            AI-powered exam paper generation, practice testing and answer evaluation.
-        </div>
-
-    </div>
-    """,
+    """<div class="hero-container">
+<div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
+<div class="hero-subtitle">AI-powered exam paper generation, practice testing and answer evaluation.</div>
+</div>""",
     unsafe_allow_html=True
 )
 
@@ -473,18 +452,13 @@ tab1, tab2 = st.tabs(
 # ============================================================
 
 with tab1:
-
-    st.markdown(
-        '<div class="edu-card">',
-        unsafe_allow_html=True
-    )
+    st.markdown('<div class="edu-card">', unsafe_allow_html=True)
 
     st.subheader("Create New Test Paper")
 
     col1, col2 = st.columns(2)
 
     with col1:
-
         test_type = st.selectbox(
             "Exam Category",
             [
@@ -519,7 +493,6 @@ with tab1:
         diff_level = difficulty_labels[difficulty]
 
     with col2:
-
         uploaded_pdf = st.file_uploader(
             "Upload Syllabus / Chapter PDF (Optional)",
             type=["pdf"]
@@ -557,37 +530,15 @@ with tab1:
     )
 
     if generate_button:
-
         if not api_key:
-
-            st.error(
-                "Please enter your Gemini API key first."
-            )
-
+            st.error("Please enter your Gemini API key first.")
         elif not topic.strip():
-
-            st.error(
-                "Please enter a topic or subject."
-            )
-
-        elif (
-            mcq_count == 0
-            and short_count == 0
-            and long_count == 0
-        ):
-
-            st.error(
-                "Please select at least one question."
-            )
-
+            st.error("Please enter a topic or subject.")
+        elif mcq_count == 0 and short_count == 0 and long_count == 0:
+            st.error("Please select at least one question.")
         else:
-
-            with st.spinner(
-                "Generating your test paper..."
-            ):
-
+            with st.spinner("Generating your test paper..."):
                 try:
-
                     generated_result = generate_test_paper(
                         api_key=api_key,
                         topic=topic,
@@ -599,29 +550,16 @@ with tab1:
                         diff_level=diff_level
                     )
 
-                    st.session_state[
-                        "generated_paper"
-                    ] = generated_result
+                    st.session_state["generated_paper"] = generated_result
 
                 except Exception as e:
-
-                    st.error(
-                        "Error generating test paper."
-                    )
-
-                    st.code(
-                        str(e)
-                    )
+                    st.error("Error generating test paper.")
+                    st.code(str(e))
 
     if "generated_paper" in st.session_state:
-
         st.divider()
-
         st.subheader("📄 Generated Test Paper")
-
-        st.markdown(
-            st.session_state["generated_paper"]
-        )
+        st.markdown(st.session_state["generated_paper"])
 
         st.download_button(
             label="⬇️ Download Test Paper",
@@ -637,10 +575,7 @@ with tab1:
 # ============================================================
 
 with tab2:
-
-    st.subheader(
-        "📊 Evaluate Student Answers"
-    )
+    st.subheader("📊 Evaluate Student Answers")
 
     default_paper = st.session_state.get("generated_paper", "")
 
@@ -663,64 +598,31 @@ with tab2:
     )
 
     if evaluate_button:
-
         if not api_key:
-
-            st.error(
-                "Please enter your Gemini API key first."
-            )
-
+            st.error("Please enter your Gemini API key first.")
         elif not question_paper.strip():
-
-            st.error(
-                "Please paste the question paper."
-            )
-
+            st.error("Please paste the question paper.")
         elif not student_answers.strip():
-
-            st.error(
-                "Please paste the student's answers."
-            )
-
+            st.error("Please paste the student's answers.")
         else:
-
-            with st.spinner(
-                "Evaluating student answers..."
-            ):
-
+            with st.spinner("Evaluating student answers..."):
                 try:
-
                     evaluation = evaluate_student_answers(
                         api_key=api_key,
                         question_paper=question_paper,
                         student_answers=student_answers
                     )
 
-                    st.session_state[
-                        "evaluation"
-                    ] = evaluation
+                    st.session_state["evaluation"] = evaluation
 
                 except Exception as e:
-
-                    st.error(
-                        "Error evaluating answers."
-                    )
-
-                    st.code(
-                        str(e)
-                    )
+                    st.error("Error evaluating answers.")
+                    st.code(str(e))
 
     if "evaluation" in st.session_state:
-
         st.divider()
-
-        st.subheader(
-            "📋 Evaluation Result"
-        )
-
-        st.markdown(
-            st.session_state["evaluation"]
-        )
+        st.subheader("📋 Evaluation Result")
+        st.markdown(st.session_state["evaluation"])
 
         st.download_button(
             label="⬇️ Download Evaluation",
@@ -736,18 +638,9 @@ with tab2:
 # ============================================================
 
 st.markdown(
-    """
-    <div class="branding-card">
-
-        <div class="branding-name">
-            Designed by Waheed Ali Hamouzai
-        </div>
-
-        <div class="branding-tag">
-            WSA Educational Community • AI Powered Learning
-        </div>
-
-    </div>
-    """,
+    """<div class="branding-card">
+<div class="branding-name">Designed by Waheed Ali Hamouzai</div>
+<div class="branding-tag">WSA Educational Community • AI Powered Learning</div>
+</div>""",
     unsafe_allow_html=True
 )
