@@ -331,6 +331,32 @@ Provide a structured evaluation report:
     )
 
 
+def analyze_random_test(api_key, test_content, additional_context=""):
+    prompt = f"""
+Analyze the following random test paper, solved sheet, or test result provided by the user.
+
+USER CONTEXT / GOAL:
+{additional_context if additional_context else "General test analysis and performance diagnostic."}
+
+TEST DATA / CONTENT:
+{test_content}
+
+Provide a comprehensive Diagnostic & Improvement Report structured as follows:
+1. 📌 **Executive Performance Overview**: High-level estimation of score, accuracy, or completion quality.
+2. 🎯 **Key Weaknesses & Knowledge Gaps**: Identify exact topics, question types, or concepts where performance is lacking.
+3. 🔍 **Priority Focus Areas**: Highlight top 3 critical subjects/topics the student MUST prioritize immediately.
+4. 🚀 **Actionable Improvement Strategy**: Step-by-step study recommendations, practice methods, and revision plan.
+5. 💡 **Recommended Resources & Next Steps**: Suggested topics to solve next or key formulas/concepts to memorize.
+"""
+
+    return call_openai_api(
+        api_key=api_key,
+        prompt_text=prompt,
+        system_instruction="You are a senior academic mentor and diagnostic expert specializing in test analysis and student performance optimization.",
+        temperature=0.3
+    )
+
+
 # ============================================================
 # SIDEBAR & HEADER
 # ============================================================
@@ -348,12 +374,16 @@ with st.sidebar:
 st.markdown(
     """<div class="hero-container">
 <div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
-<div class="hero-subtitle">AI-powered exam paper generation and student answer evaluation.</div>
+<div class="hero-subtitle">AI-powered exam paper generation, student evaluation, and performance diagnostics.</div>
 </div>""",
     unsafe_allow_html=True
 )
 
-tab1, tab2 = st.tabs(["📝 Generate Test Paper", "📊 Evaluate Student Answers"])
+tab1, tab2, tab3 = st.tabs([
+    "📝 Generate Test Paper", 
+    "📊 Evaluate Student Answers", 
+    "🎯 Quick Test Diagnostic & Focus Areas"
+])
 
 
 # ============================================================
@@ -512,6 +542,83 @@ with tab2:
                 "⬇️ Download PDF Report (.pdf)",
                 data=eval_pdf,
                 file_name="WSA_Student_Evaluation.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+
+# ============================================================
+# TAB 3 — RANDOM TEST DIAGNOSTIC & IMPROVEMENT
+# ============================================================
+
+with tab3:
+    st.subheader("🎯 Test Performance Diagnostic & Focus Area Planner")
+    st.markdown("Upload or paste any random solved test, question paper, or result card to receive a detailed breakdown of strengths, weaknesses, focus areas, and improvement plans.")
+
+    col_diag1, col_diag2 = st.columns(2)
+
+    with col_diag1:
+        st.markdown("### 📄 Test File / Raw Data")
+        random_test_file = st.file_uploader(
+            "Upload Test or Result Document (PDF, DOCX, TXT)",
+            type=["pdf", "docx", "txt"],
+            key="random_test_up"
+        )
+        random_test_text = st.text_area(
+            "Or Paste Raw Test Content / Scores Directly",
+            height=200,
+            key="random_test_text",
+            placeholder="e.g., Question 1: Incorrect answer selected...\nQuestion 2: Right...\nOR paste raw quiz content here."
+        )
+
+    with col_diag2:
+        st.markdown("### ⚙️ Context & Target Goals (Optional)")
+        user_context = st.text_area(
+            "Target Exam / Student Goal",
+            height=270,
+            key="user_context",
+            placeholder="e.g., Preparing for BPSC Computer Science / SBK Screening Test. Target score is 80%+."
+        )
+
+    if st.button("🔍 Analyze Test & Generate Focus Plan", use_container_width=True):
+        if not api_key:
+            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
+        else:
+            extracted_test = process_uploaded_file(random_test_file)
+            final_test_content = extracted_test or random_test_text.strip()
+
+            if not final_test_content:
+                st.error("⚠️ Please upload a test file or paste text to analyze.")
+            else:
+                with st.spinner("Analyzing test data and designing personalized improvement plan..."):
+                    try:
+                        diag_res = analyze_random_test(
+                            api_key, final_test_content, user_context
+                        )
+                        st.session_state["diagnostic_analysis"] = diag_res
+                    except Exception as e:
+                        st.error(f"❌ Error occurred: {e}")
+
+    if "diagnostic_analysis" in st.session_state:
+        st.divider()
+        st.subheader("📈 Diagnostic Report & Improvement Plan")
+        st.markdown(st.session_state["diagnostic_analysis"])
+
+        col_rd1, col_rd2 = st.columns(2)
+        with col_rd1:
+            st.download_button(
+                "⬇️ Download Text Diagnostic (.txt)",
+                data=st.session_state["diagnostic_analysis"],
+                file_name="WSA_Test_Diagnostic.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_rd2:
+            diag_pdf = create_pdf_from_text("Test Diagnostic & Improvement Plan", st.session_state["diagnostic_analysis"])
+            st.download_button(
+                "⬇️ Download PDF Diagnostic (.pdf)",
+                data=diag_pdf,
+                file_name="WSA_Test_Diagnostic.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
