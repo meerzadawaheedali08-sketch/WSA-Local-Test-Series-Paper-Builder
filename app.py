@@ -76,6 +76,7 @@ st.markdown(
             margin-bottom: 20px;
         }
 
+        /* ENHANCED BRANDING & HADITH FOOTER CARD */
         .branding-card {
             background: linear-gradient(
                 135deg,
@@ -83,24 +84,51 @@ st.markdown(
                 #1E293B 100%
             );
             color: #F8FAFC;
-            padding: 16px;
-            border-radius: 10px;
-            border-left: 4px solid #3B82F6;
+            padding: 24px 20px;
+            border-radius: 12px;
+            border-top: 4px solid #3B82F6;
             text-align: center;
-            margin-top: 25px;
+            margin-top: 40px;
+            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.3);
+        }
+
+        .hadith-quote {
+            font-size: 1.02rem;
+            font-style: italic;
+            font-weight: 500;
+            color: #F1F5F9;
+            line-height: 1.6;
+            margin-bottom: 6px;
+        }
+
+        .hadith-ref {
+            font-size: 0.82rem;
+            color: #60A5FA;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            margin-bottom: 16px;
+        }
+
+        .footer-divider {
+            border: 0;
+            border-top: 1px solid #334155;
+            margin: 16px auto;
+            width: 80%;
         }
 
         .branding-name {
-            font-size: 1.05rem;
+            font-size: 1.1rem;
             font-weight: 700;
-            color: #60A5FA;
+            color: #38BDF8;
             margin-bottom: 4px;
+            letter-spacing: 0.2px;
         }
 
         .branding-tag {
-            font-size: 0.8rem;
+            font-size: 0.82rem;
             color: #94A3B8;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
         }
 
         .stButton > button {
@@ -122,11 +150,11 @@ st.markdown(
 
 
 # ============================================================
-# PDF GENERATOR FUNCTION
+# PDF GENERATOR FUNCTION WITH HADITH FOOTER
 # ============================================================
 
 def create_pdf_from_text(title, content):
-    """Converts markdown/text content into a downloadable PDF binary stream with app and author branding."""
+    """Converts markdown/text content into a downloadable PDF binary stream with Hadith and author branding."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -166,13 +194,33 @@ def create_pdf_from_text(title, content):
         spaceAfter=8
     )
 
+    pdf_hadith_style = ParagraphStyle(
+        'PdfHadithStyle',
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor('#334155'),
+        alignment=1,
+        spaceBefore=12,
+        spaceAfter=2
+    )
+
+    pdf_hadith_ref = ParagraphStyle(
+        'PdfHadithRef',
+        parent=styles['Normal'],
+        fontSize=7.5,
+        textColor=colors.HexColor('#2563EB'),
+        alignment=1,
+        spaceAfter=10
+    )
+
     footer_style = ParagraphStyle(
         'FooterStyle',
         parent=styles['Normal'],
         fontSize=9,
-        textColor=colors.HexColor('#2563EB'),
+        textColor=colors.HexColor('#0F172A'),
         alignment=1,
-        spaceBefore=15
+        spaceBefore=5
     )
 
     story = [
@@ -195,8 +243,11 @@ def create_pdf_from_text(title, content):
         else:
             story.append(Spacer(1, 6))
 
+    # Hadith & Branding Section in Generated PDF
     story.append(Spacer(1, 15))
     story.append(Paragraph("_________________________________________________________________________________", app_meta_style))
+    story.append(Paragraph('<i>"Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."</i>', pdf_hadith_style))
+    story.append(Paragraph('— Prophet Muhammad (PBUH) | <b>Sahih Muslim, Book 35, Hadith 6518</b>', pdf_hadith_ref))
     story.append(Paragraph("<b>Designed by Waheed Ali Hamouzai</b> • WSA Educational Community", footer_style))
 
     doc.build(story)
@@ -643,13 +694,16 @@ with tab3:
 
 
 # ============================================================
-# FOOTER
+# UPDATED FOOTER WITH HADITH & MODERN CARD DESIGN
 # ============================================================
 
 st.markdown(
     """<div class="branding-card">
-<div class="branding-name">Designed by Waheed Ali Hamouzai</div>
-<div class="branding-tag">WSA Educational Community • AI Powered Learning</div>
+    <div class="hadith-quote">"Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."</div>
+    <div class="hadith-ref">— Prophet Muhammad (PBUH) | Sahih Muslim, Book 35, Hadith 6518</div>
+    <hr class="footer-divider">
+    <div class="branding-name">Designed by Waheed Ali Hamouzai</div>
+    <div class="branding-tag">WSA Educational Community • AI Powered Learning</div>
 </div>""",
     unsafe_allow_html=True
 )
