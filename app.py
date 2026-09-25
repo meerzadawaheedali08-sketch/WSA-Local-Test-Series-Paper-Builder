@@ -138,7 +138,7 @@ def extract_pdf_text(uploaded_file):
 
 
 # ============================================================
-# GEMINI API CALL WITH MULTI-MODEL FALLBACK & RETRY
+# GEMINI API CALL WITH ROBUST FALLBACK & AUTO-DISCOVERY
 # ============================================================
 
 def call_gemini_with_retry(
@@ -149,14 +149,14 @@ def call_gemini_with_retry(
     retries=2
 ):
     """
-    Call Gemini API with multi-model fallback and retry logic.
-    Tries multiple active Gemini models if one fails or is deprecated.
+    Call Gemini API with robust model fallback using the new google-genai SDK.
     """
+    # Active Gemini model identifier list for the google-genai SDK
     candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
         "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-2.5-pro"
     ]
 
     last_error_message = ""
@@ -180,11 +180,17 @@ def call_gemini_with_retry(
                 error_text = str(e)
                 last_error_message = error_text
 
-                # If model is deprecated or not found (404), switch to the next model immediately
-                if "404" in error_text or "NOT_FOUND" in error_text or "not available" in error_text.lower():
+                # Invalid API Key / Authentication Error -> Fail fast
+                if "API_KEY_INVALID" in error_text or "403" in error_text or "PermissionDenied" in error_text:
+                    raise Exception(
+                        "❌ Invalid API Key! Kripya Google AI Studio se sahi API Key copy karke Enter karein."
+                    )
+
+                # If 404/NOT_FOUND -> Move immediately to the next candidate model
+                if "404" in error_text or "NOT_FOUND" in error_text or "not found" in error_text.lower():
                     break
 
-                # Temporary errors (Rate limits, timeout): wait and retry
+                # Rate Limit / Transient Error -> Retry with exponential backoff
                 temporary_error = (
                     "429" in error_text
                     or "503" in error_text
@@ -197,14 +203,14 @@ def call_gemini_with_retry(
                     time.sleep(2 * (attempt + 1))
                     continue
 
-    # If all models fail, raise a detailed error message
+    # Final Exception Handler with User Instructions
     raise Exception(
-        f"API Connection Failed! Could not connect to any Gemini models.\n\n"
-        f"Possible Reasons:\n"
-        f"1. Invalid API Key — Please check if your Gemini API key is correct.\n"
-        f"2. Quota / Rate Limit Exceeded — Check your quota in Google AI Studio.\n"
-        f"3. Network Issue — Ensure you have a stable internet connection.\n\n"
-        f"Original Error: {last_error_message}"
+        f"API Connection Failed!\n\n"
+        f"Kripya niche diye gaye steps check karein:\n"
+        f"1. **API Key Verify Karein:** Google AI Studio (aistudio.google.com) par jakar new API key generate karein.\n"
+        f"2. **Project Billing / Quota:** Check karein ki aapke Google account par Free Tier Quota limit end toh nahi ho gayi.\n"
+        f"3. **Network Connection:** Apna Internet connection check karein.\n\n"
+        f"Error Details: {last_error_message}"
     )
 
 
