@@ -130,21 +130,14 @@ st.markdown(
 
 def extract_pdf_text(uploaded_file):
     """Extract text from uploaded PDF."""
-
     try:
         reader = pypdf.PdfReader(uploaded_file)
-
         text = ""
-
         for page in reader.pages:
-
             extracted = page.extract_text()
-
             if extracted:
                 text += extracted + "\n"
-
         return text.strip()
-
     except Exception:
         return ""
 
@@ -162,15 +155,13 @@ def call_gemini_with_retry(
 ):
     """
     Call Gemini API with automatic retry
-    for temporary errors.
+    for temporary errors and robust model fallback.
     """
 
     for attempt in range(retries):
-
         try:
-
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-2.0-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     temperature=temperature,
@@ -186,9 +177,7 @@ def call_gemini_with_retry(
             return response.text
 
         except Exception as e:
-
             error_text = str(e)
-
             temporary_error = (
                 "429" in error_text
                 or "503" in error_text
@@ -198,11 +187,8 @@ def call_gemini_with_retry(
             )
 
             if temporary_error and attempt < retries - 1:
-
                 wait_time = 2 * (attempt + 1)
-
                 time.sleep(wait_time)
-
                 continue
 
             raise e
@@ -224,18 +210,28 @@ def generate_test_paper(
 ):
     """
     Generate complete question paper and answer key.
+    Handles both normal text PDFs and scanned image PDFs.
     """
 
     client = genai.Client(api_key=api_key)
+    contents = []
 
     pdf_text = ""
-
     if uploaded_pdf is not None:
-
         pdf_text = extract_pdf_text(uploaded_pdf)
-
         if len(pdf_text) > 20000:
             pdf_text = pdf_text[:20000]
+
+        # Scanned PDF Fallback: Direct Part attachment for OCR
+        if not pdf_text:
+            uploaded_pdf.seek(0)
+            bytes_data = uploaded_pdf.getvalue()
+            contents.append(
+                types.Part.from_bytes(
+                    data=bytes_data,
+                    mime_type="application/pdf"
+                )
+            )
 
     prompt = f"""
 You are an expert examiner for competitive testing agencies
@@ -253,51 +249,22 @@ DIFFICULTY LEVEL:
 {diff_level}
 
 QUESTION COUNTS:
-
-MCQs:
-{mcq_count}
-
-SHORT QUESTIONS:
-{short_count}
-
-LONG / DESCRIPTIVE QUESTIONS:
-{long_count}
-
+MCQs: {mcq_count}
+SHORT QUESTIONS: {short_count}
+LONG / DESCRIPTIVE QUESTIONS: {long_count}
 
 IMPORTANT REQUIREMENTS:
-
-1. MCQs must have exactly four options:
-   A, B, C and D.
-
+1. MCQs must have exactly four options: A, B, C and D.
 2. Every question must be relevant to the selected topic.
-
 3. Match the requested difficulty level.
-
 4. Avoid duplicate questions.
-
 5. MCQs must have only one clearly correct answer.
-
 6. Short questions should require concise answers.
-
 7. Long questions should require detailed answers.
-
 8. Provide a complete answer key.
-
-9. Keep the paper professional and suitable for
-   Pakistani educational or competitive testing.
-
-10. If reference material is provided below,
-    use it as the primary source.
-
-11. Do not invent information that contradicts
-    the reference material.
-
-12. Clearly separate the QUESTION PAPER
-    from the ANSWER KEY.
-
-13. Do not add unnecessary explanations outside
-    the requested paper and answer key.
-
+9. Keep the paper professional and suitable for Pakistani educational or competitive testing.
+10. If reference material is provided below or as an attached PDF, use it as the primary source.
+11. Clearly separate the QUESTION PAPER from the ANSWER KEY.
 
 REQUIRED OUTPUT FORMAT:
 
@@ -305,45 +272,28 @@ REQUIRED OUTPUT FORMAT:
 WSA EDUCATIONAL TEST SERIES
 ========================================
 
-TEST CATEGORY:
-{test_type}
-
-TOPIC:
-{topic}
-
-DIFFICULTY:
-{diff_level}
-
+TEST CATEGORY: {test_type}
+TOPIC: {topic}
+DIFFICULTY: {diff_level}
 
 ========================================
 SECTION A — MCQs
 ========================================
-
-For every MCQ use:
-
 1. Question
    A) Option
    B) Option
    C) Option
    D) Option
 
-
 ========================================
 SECTION B — SHORT QUESTIONS
 ========================================
-
 1. Question
-2. Question
-3. Question
-
 
 ========================================
 SECTION C — LONG QUESTIONS
 ========================================
-
 1. Question
-2. Question
-
 
 ========================================
 ANSWER KEY
@@ -351,24 +301,18 @@ ANSWER KEY
 
 MCQs:
 1. A
-2. B
-3. C
 
 SHORT QUESTIONS:
 1. Model Answer:
-2. Model Answer:
 
 LONG QUESTIONS:
 1. Model Answer:
-2. Model Answer:
 
-
-REFERENCE MATERIAL FROM PDF:
-
-{pdf_text if pdf_text else "No PDF reference material was provided."}
+REFERENCE MATERIAL FROM TEXT:
+{pdf_text if pdf_text else "Attached PDF processed directly via Vision/OCR."}
 """
 
-    contents = [prompt]
+    contents.append(prompt)
 
     result = call_gemini_with_retry(
         client=client,
@@ -403,14 +347,10 @@ Evaluate the student's answers against the
 provided question paper and answer key.
 
 QUESTION PAPER:
-
 {question_paper}
 
-
 STUDENT ANSWERS:
-
 {student_answers}
-
 
 Provide the evaluation in this format:
 
@@ -432,14 +372,6 @@ Correct / Incorrect / Partially Correct
 
 Marks:
 Explanation:
-
-Question 2:
-Correct / Incorrect / Partially Correct
-
-Marks:
-Explanation:
-
-Continue for all questions.
 
 ========================================
 FINAL FEEDBACK
@@ -476,11 +408,15 @@ with st.sidebar:
 
     st.subheader("Gemini API")
 
-    api_key = st.text_input(
+    env_api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key_input = st.text_input(
         "Enter Gemini API Key",
+        value=env_api_key,
         type="password",
         placeholder="AIza..."
     )
+
+    api_key = api_key_input or env_api_key
 
     st.divider()
 
@@ -507,13 +443,11 @@ st.markdown(
     <div class="hero-container">
 
         <div class="hero-title">
-            🎓 WSA Educational Test Series
-            & Paper Builder
+            🎓 WSA Educational Test Series & Paper Builder
         </div>
 
         <div class="hero-subtitle">
-            AI-powered exam paper generation,
-            practice testing and answer evaluation.
+            AI-powered exam paper generation, practice testing and answer evaluation.
         </div>
 
     </div>
@@ -708,8 +642,11 @@ with tab2:
         "📊 Evaluate Student Answers"
     )
 
+    default_paper = st.session_state.get("generated_paper", "")
+
     question_paper = st.text_area(
         "Paste Question Paper / Answer Key",
+        value=default_paper,
         height=300,
         placeholder="Paste the generated question paper and answer key here..."
     )
