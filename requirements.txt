@@ -1,6 +1,6 @@
 streamlit
-google-genai
 pypdf
-python-dotenv
 python-docx
+openai
+python-dotenv
 reportlab
