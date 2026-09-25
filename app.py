@@ -1,4 +1,5 @@
 import os
+import time
 import streamlit as st
 import pypdf
 from google import genai
@@ -90,7 +91,7 @@ st.markdown("""
 
 
 def extract_pdf_text(uploaded_file):
-    """Try to extract text using pypdf."""
+    """PDF text extraction helper."""
     try:
         reader = pypdf.PdfReader(uploaded_file)
         text = ""
@@ -99,12 +100,34 @@ def extract_pdf_text(uploaded_file):
             if extracted:
                 text += extracted + "\n"
         return text.strip()
-    except Exception as e:
+    except Exception:
         return ""
 
 
+def call_gemini_with_retry(client, contents, temperature=0.3, max_tokens=3500, retries=3):
+    """503 high demand error se bachne ke liye auto-retry mechanism."""
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',  # Most stable production model
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                )
+            )
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
+                if attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))  # Pause for 2s then 4s before retrying
+                    continue
+            raise e
+
+
 def generate_test_paper(api_key, topic, uploaded_pdf, test_type, mcq_count, short_count, long_count, diff_level):
-    """Gemini 3.8 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
+    """Gemini 1.5 Flash ke zariye complete Question Paper aur Answer Key generate karna."""
     try:
         client = genai.Client(api_key=api_key)
 
@@ -135,24 +158,13 @@ Structure your output into TWO clearly separated main sections using Markdown fo
 """
 
         contents = []
-        
-        # Handle PDF attachment (scanned or text)
         if uploaded_pdf is not None:
             bytes_data = uploaded_pdf.getvalue()
             contents.append(types.Part.from_bytes(data=bytes_data, mime_type="application/pdf"))
             
         contents.append(prompt)
 
-        # Updated to gemini-3.8-flash
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=contents,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=3500,
-            )
-        )
-        return response.text
+        return call_gemini_with_retry(client, contents, temperature=0.3, max_tokens=3500)
     except Exception as e:
         return f"Error generating test paper: {str(e)}"
 
@@ -183,16 +195,8 @@ Please provide a structured grading report in clean Markdown:
 4. **Actionable Suggestions**: 2-3 specific recommendations for better test preparation.
 """
 
-        # Updated to gemini-3.8-flash
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=2500,
-            )
-        )
-        return response.text
+        contents = [prompt]
+        return call_gemini_with_retry(client, contents, temperature=0.2, max_tokens=2500)
     except Exception as e:
         return f"Error evaluating submission: {str(e)}"
 
@@ -272,7 +276,7 @@ with tab1:
         elif not topic.strip():
             st.warning("Please enter a Subject / Topic Title.")
         else:
-            with st.spinner("Generating Question Paper and Answer Key via Gemini 3.8 Flash..."):
+            with st.spinner("Generating Question Paper and Answer Key via Gemini 1.5 Flash..."):
                 generated_result = generate_test_paper(
                     api_key=api_key,
                     topic=topic,
