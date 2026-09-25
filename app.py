@@ -6,7 +6,8 @@ import streamlit as st
 import pypdf
 import docx
 
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # PDF Generation Imports
@@ -76,7 +77,7 @@ st.markdown(
             margin-bottom: 20px;
         }
 
-        /* ENHANCED BRANDING & HADITH FOOTER CARD */
+        /* BRANDING & HADITH FOOTER CARD */
         .branding-card {
             background: linear-gradient(
                 135deg,
@@ -299,22 +300,44 @@ def process_uploaded_file(uploaded_file):
 
 
 # ============================================================
-# OPENAI API CALL FUNCTION
+# GEMINI API CALL FUNCTION WITH MULTI-MODEL FALLBACK
 # ============================================================
 
-def call_openai_api(api_key, prompt_text, system_instruction="You are an expert educational examiner.", temperature=0.3):
-    client = OpenAI(api_key=api_key)
-    
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": prompt_text}
-        ],
-        temperature=temperature
-    )
-    
-    return response.choices[0].message.content
+def call_gemini_api(api_key, prompt_text, system_instruction="You are an expert educational examiner.", temperature=0.3, selected_model="Auto (Fallback)"):
+    client = genai.Client(api_key=api_key)
+
+    # Gemini Models list for automatic fallback
+    fallback_models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ]
+
+    # If user selected a specific model manually, try that model first
+    if selected_model != "Auto (Fallback)":
+        fallback_models.insert(0, selected_model)
+
+    last_error = None
+
+    for model_name in fallback_models:
+        try:
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=temperature
+            )
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_text,
+                config=config
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            last_error = e
+            continue  # Fallback to the next model in list
+
+    raise Exception(f"All Gemini models failed. Last error: {last_error}")
 
 
 # ============================================================
@@ -323,7 +346,7 @@ def call_openai_api(api_key, prompt_text, system_instruction="You are an expert 
 
 def generate_test_paper(
     api_key, topic, uploaded_pdf, test_type, language,
-    mcq_count, short_count, long_count, diff_level
+    mcq_count, short_count, long_count, diff_level, selected_model
 ):
     pdf_text = process_uploaded_file(uploaded_pdf)
 
@@ -361,16 +384,17 @@ REQUIREMENTS:
 {f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""}
 """
 
-    return call_openai_api(
+    return call_gemini_api(
         api_key=api_key,
         prompt_text=prompt,
         system_instruction="You are an expert examiner for educational boards and competitive testing services capable of generating test papers in English, Urdu, and Bilingual formats.",
-        temperature=0.3
+        temperature=0.3,
+        selected_model=selected_model
     )
 
 
 def evaluate_student_answers(
-    api_key, paper_text, answers_text
+    api_key, paper_text, answers_text, selected_model
 ):
     prompt = f"""
 Evaluate the student's answer sheet against the provided question paper and answer key.
@@ -388,15 +412,16 @@ Provide a structured evaluation report:
 - Strengths & Weaknesses
 """
 
-    return call_openai_api(
+    return call_gemini_api(
         api_key=api_key,
         prompt_text=prompt,
         system_instruction="You are an experienced examiner evaluating student answers accurately and providing constructive feedback.",
-        temperature=0.2
+        temperature=0.2,
+        selected_model=selected_model
     )
 
 
-def analyze_random_test(api_key, test_content, additional_context=""):
+def analyze_random_test(api_key, test_content, additional_context="", selected_model="Auto (Fallback)"):
     prompt = f"""
 Analyze the following random test paper, solved sheet, or test result provided by the user.
 
@@ -414,11 +439,12 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
 5. 💡 **Recommended Resources & Next Steps**: Suggested topics to solve next or key formulas/concepts to memorize.
 """
 
-    return call_openai_api(
+    return call_gemini_api(
         api_key=api_key,
         prompt_text=prompt,
         system_instruction="You are a senior academic mentor and diagnostic expert specializing in test analysis and student performance optimization.",
-        temperature=0.3
+        temperature=0.3,
+        selected_model=selected_model
     )
 
 
@@ -430,11 +456,54 @@ with st.sidebar:
     st.header("⚙️ Settings")
     env_api_key = os.getenv("GEMINI_API_KEY", "")
     api_key_input = st.text_input(
-        "Enter GEMINI API Key (sk-...)",
+        "Enter GEMINI API Key",
         value=env_api_key,
         type="password"
     )
     api_key = api_key_input or env_api_key
+
+    selected_model = st.selectbox(
+        "🤖 Select Gemini Model",
+        [
+            "Auto (Fallback)",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro"
+        ],
+        help="Agar 'Auto (Fallback)' select hoga, toh system ek model fail hone par doosre model par shift ho jayega."
+    )
+
+    # Sidebar Footer (Hadith & Branding)
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+            padding: 16px;
+            border-radius: 10px;
+            border-top: 3px solid #3B82F6;
+            text-align: center;
+            color: white;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        ">
+            <div style="font-size: 0.88rem; font-style: italic; color: #F1F5F9; line-height: 1.4; margin-bottom: 6px;">
+                "Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."
+            </div>
+            <div style="font-size: 0.75rem; color: #60A5FA; font-weight: 600; margin-bottom: 10px;">
+                — Prophet Muhammad (PBUH)<br><b>Sahih Muslim, Book 35, Hadith 6518</b>
+            </div>
+            <hr style="border: 0; border-top: 1px solid #334155; margin: 10px 0;">
+            <div style="font-size: 0.9rem; font-weight: 700; color: #38BDF8;">
+                Designed by Waheed Ali Hamouzai
+            </div>
+            <div style="font-size: 0.7rem; color: #94A3B8; letter-spacing: 0.5px; text-transform: uppercase; margin-top: 2px;">
+                WSA Educational Community
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 st.markdown(
     """<div class="hero-container">
@@ -491,15 +560,15 @@ with tab1:
 
     if st.button("🚀 Generate Test Paper", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
+            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
         elif not topic.strip():
             st.error("⚠️ Please enter a topic or subject name.")
         else:
-            with st.spinner("Generating test paper via AI... Please wait."):
+            with st.spinner("Generating test paper via Gemini AI... Please wait."):
                 try:
                     res = generate_test_paper(
                         api_key, topic, uploaded_pdf, test_type, language,
-                        mcq_count, short_count, long_count, diff_level
+                        mcq_count, short_count, long_count, diff_level, selected_model
                     )
                     st.session_state["generated_paper"] = res
                 except Exception as e:
@@ -569,7 +638,7 @@ with tab2:
 
     if st.button("📊 Evaluate Answers", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
+            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
         else:
             p_text = process_uploaded_file(paper_file)
             final_p_text = p_text or question_paper_text.strip()
@@ -582,10 +651,10 @@ with tab2:
             elif not final_a_text:
                 st.error("⚠️ Student answer content is missing. Please upload or paste text.")
             else:
-                with st.spinner("Evaluating student answers via AI... Please wait."):
+                with st.spinner("Evaluating student answers via Gemini AI... Please wait."):
                     try:
                         eval_res = evaluate_student_answers(
-                            api_key, final_p_text, final_a_text
+                            api_key, final_p_text, final_a_text, selected_model
                         )
                         st.session_state["evaluation"] = eval_res
                     except Exception as e:
@@ -651,7 +720,7 @@ with tab3:
 
     if st.button("🔍 Analyze Test & Generate Focus Plan", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
+            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
         else:
             extracted_test = process_uploaded_file(random_test_file)
             final_test_content = extracted_test or random_test_text.strip()
@@ -662,7 +731,7 @@ with tab3:
                 with st.spinner("Analyzing test data and designing personalized improvement plan..."):
                     try:
                         diag_res = analyze_random_test(
-                            api_key, final_test_content, user_context
+                            api_key, final_test_content, user_context, selected_model
                         )
                         st.session_state["diagnostic_analysis"] = diag_res
                     except Exception as e:
@@ -694,7 +763,7 @@ with tab3:
 
 
 # ============================================================
-# UPDATED FOOTER WITH HADITH & MODERN CARD DESIGN
+# MAIN FOOTER
 # ============================================================
 
 st.markdown(
