@@ -448,6 +448,19 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.subheader("Gemini API")
+
+    env_api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key_input = st.text_input(
+        "Enter Gemini API Key",
+        value=env_api_key,
+        type="password",
+        placeholder="AIza..."
+    )
+
+
 
 # ============================================================
 # TABS
