@@ -513,7 +513,8 @@ with tab2:
         question_paper_text = st.text_area(
             "Or Paste Text",
             value=default_paper,
-            height=200
+            height=200,
+            key="q_paper_text"  # <-- Added unique key
         )
 
     with col_answer:
@@ -525,7 +526,8 @@ with tab2:
         )
         student_answers_text = st.text_area(
             "Or Paste Text",
-            height=200
+            height=200,
+            key="s_answers_text"  # <-- Added unique key
         )
 
     if st.button("📊 Evaluate Answers", use_container_width=True):
