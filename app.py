@@ -6,7 +6,7 @@ import streamlit as st
 import pypdf
 import docx
 
-from openai import OpenAI  # <-- Replaced google.genai with openai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # PDF Generation Imports
@@ -255,7 +255,7 @@ def call_openai_api(api_key, prompt_text, system_instruction="You are an expert 
     client = OpenAI(api_key=api_key)
     
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Highly capable & cost-effective
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt_text}
@@ -290,7 +290,7 @@ LONG QUESTIONS: {long_count}
 
 REQUIREMENTS:
 1. MCQs must have 4 options (A, B, C, D).
-2. Short and Long questions should be clear.
+2. Short and Long questions should be clear and well-structured.
 3. Provide a complete ANSWER KEY at the bottom.
 
 {f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""}
@@ -299,7 +299,7 @@ REQUIREMENTS:
     return call_openai_api(
         api_key=api_key,
         prompt_text=prompt,
-        system_instruction="You are an expert examiner for educational boards and competitive testing services in Pakistan.",
+        system_instruction="You are an expert examiner for educational boards and competitive testing services.",
         temperature=0.3
     )
 
@@ -326,7 +326,7 @@ Provide a structured evaluation report:
     return call_openai_api(
         api_key=api_key,
         prompt_text=prompt,
-        system_instruction="You are an experienced strict examiner evaluating student answers.",
+        system_instruction="You are an experienced examiner evaluating student answers accurately and providing constructive feedback.",
         temperature=0.2
     )
 
@@ -348,7 +348,7 @@ with st.sidebar:
 st.markdown(
     """<div class="hero-container">
 <div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
-<div class="hero-subtitle">AI-powered exam paper generation and answer evaluation.</div>
+<div class="hero-subtitle">AI-powered exam paper generation and student answer evaluation.</div>
 </div>""",
     unsafe_allow_html=True
 )
@@ -392,11 +392,11 @@ with tab1:
 
     if st.button("🚀 Generate Test Paper", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter OpenAI API key.")
+            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
         elif not topic.strip():
-            st.error("⚠️ Please enter topic.")
+            st.error("⚠️ Please enter a topic or subject name.")
         else:
-            with st.spinner("Generating test paper via ChatGPT..."):
+            with st.spinner("Generating test paper via AI... Please wait."):
                 try:
                     res = generate_test_paper(
                         api_key, topic, uploaded_pdf, test_type,
@@ -404,7 +404,7 @@ with tab1:
                     )
                     st.session_state["generated_paper"] = res
                 except Exception as e:
-                    st.error(f"❌ Error: {e}")
+                    st.error(f"❌ Error occurred: {e}")
 
     if "generated_paper" in st.session_state:
         st.divider()
@@ -449,7 +449,7 @@ with tab2:
             key="p_up"
         )
         question_paper_text = st.text_area(
-            "Or Paste Text",
+            "Or Paste Text Directly",
             value=default_paper,
             height=200,
             key="q_paper_text"
@@ -463,14 +463,14 @@ with tab2:
             key="s_up"
         )
         student_answers_text = st.text_area(
-            "Or Paste Text",
+            "Or Paste Text Directly",
             height=200,
             key="s_answers_text"
         )
 
     if st.button("📊 Evaluate Answers", use_container_width=True):
         if not api_key:
-            st.error("⚠️ Please enter OpenAI API key.")
+            st.error("⚠️ Please enter a valid OpenAI API key in the sidebar.")
         else:
             p_text = process_uploaded_file(paper_file)
             final_p_text = p_text or question_paper_text.strip()
@@ -479,18 +479,18 @@ with tab2:
             final_a_text = a_text or student_answers_text.strip()
 
             if not final_p_text:
-                st.error("⚠️ Question paper is missing.")
+                st.error("⚠️ Question paper content is missing. Please upload or paste text.")
             elif not final_a_text:
-                st.error("⚠️ Student answers are missing.")
+                st.error("⚠️ Student answer content is missing. Please upload or paste text.")
             else:
-                with st.spinner("Evaluating student answers via ChatGPT..."):
+                with st.spinner("Evaluating student answers via AI... Please wait."):
                     try:
                         eval_res = evaluate_student_answers(
                             api_key, final_p_text, final_a_text
                         )
                         st.session_state["evaluation"] = eval_res
                     except Exception as e:
-                        st.error(f"❌ Error: {e}")
+                        st.error(f"❌ Error occurred: {e}")
 
     if "evaluation" in st.session_state:
         st.divider()
