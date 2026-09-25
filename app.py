@@ -138,7 +138,7 @@ def extract_pdf_text(uploaded_file):
 
 
 # ============================================================
-# GEMINI API CALL WITH RETRY
+# GEMINI API CALL WITH MULTI-MODEL FALLBACK & RETRY
 # ============================================================
 
 def call_gemini_with_retry(
@@ -146,46 +146,66 @@ def call_gemini_with_retry(
     contents,
     temperature=0.3,
     max_tokens=3500,
-    retries=3
+    retries=2
 ):
     """
-    Call Gemini API with automatic retry
-    for temporary errors and robust model fallback.
+    Call Gemini API with multi-model fallback and retry logic.
+    Tries multiple active Gemini models if one fails or is deprecated.
     """
-    for attempt in range(retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.6-flash",
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens
+    candidate_models = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    ]
+
+    last_error_message = ""
+
+    for model_name in candidate_models:
+        for attempt in range(retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens
+                    )
                 )
-            )
 
-            if not response.text:
-                raise Exception(
-                    "Gemini returned an empty response."
+                if response and response.text:
+                    return response.text
+
+            except Exception as e:
+                error_text = str(e)
+                last_error_message = error_text
+
+                # If model is deprecated or not found (404), switch to the next model immediately
+                if "404" in error_text or "NOT_FOUND" in error_text or "not available" in error_text.lower():
+                    break
+
+                # Temporary errors (Rate limits, timeout): wait and retry
+                temporary_error = (
+                    "429" in error_text
+                    or "503" in error_text
+                    or "UNAVAILABLE" in error_text
+                    or "RESOURCE_EXHAUSTED" in error_text
+                    or "rate limit" in error_text.lower()
                 )
 
-            return response.text
+                if temporary_error and attempt < retries - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
 
-        except Exception as e:
-            error_text = str(e)
-            temporary_error = (
-                "429" in error_text
-                or "503" in error_text
-                or "UNAVAILABLE" in error_text
-                or "RESOURCE_EXHAUSTED" in error_text
-                or "rate limit" in error_text.lower()
-            )
-
-            if temporary_error and attempt < retries - 1:
-                wait_time = 2 * (attempt + 1)
-                time.sleep(wait_time)
-                continue
-
-            raise e
+    # If all models fail, raise a detailed error message
+    raise Exception(
+        f"API Connection Failed! Could not connect to any Gemini models.\n\n"
+        f"Possible Reasons:\n"
+        f"1. Invalid API Key — Please check if your Gemini API key is correct.\n"
+        f"2. Quota / Rate Limit Exceeded — Check your quota in Google AI Studio.\n"
+        f"3. Network Issue — Ensure you have a stable internet connection.\n\n"
+        f"Original Error: {last_error_message}"
+    )
 
 
 # ============================================================
@@ -312,7 +332,7 @@ REFERENCE MATERIAL FROM TEXT:
         contents=contents,
         temperature=0.3,
         max_tokens=6000,
-        retries=3
+        retries=2
     )
 
     return result
@@ -384,7 +404,7 @@ Suggestions:
         contents=[prompt],
         temperature=0.2,
         max_tokens=5000,
-        retries=3
+        retries=2
     )
 
     return result
@@ -531,11 +551,11 @@ with tab1:
 
     if generate_button:
         if not api_key:
-            st.error("Please enter your Gemini API key first.")
+            st.error("⚠️ Please enter your Gemini API key in the sidebar.")
         elif not topic.strip():
-            st.error("Please enter a topic or subject.")
+            st.error("⚠️ Please enter a topic or subject.")
         elif mcq_count == 0 and short_count == 0 and long_count == 0:
-            st.error("Please select at least one question.")
+            st.error("⚠️ Please select at least one question count.")
         else:
             with st.spinner("Generating your test paper..."):
                 try:
@@ -553,8 +573,8 @@ with tab1:
                     st.session_state["generated_paper"] = generated_result
 
                 except Exception as e:
-                    st.error("Error generating test paper.")
-                    st.code(str(e))
+                    st.error("❌ Failed to Generate Test Paper")
+                    st.warning(str(e))
 
     if "generated_paper" in st.session_state:
         st.divider()
@@ -599,11 +619,11 @@ with tab2:
 
     if evaluate_button:
         if not api_key:
-            st.error("Please enter your Gemini API key first.")
+            st.error("⚠️ Please enter your Gemini API key in the sidebar.")
         elif not question_paper.strip():
-            st.error("Please paste the question paper.")
+            st.error("⚠️ Please paste the question paper.")
         elif not student_answers.strip():
-            st.error("Please paste the student's answers.")
+            st.error("⚠️ Please paste the student's answers.")
         else:
             with st.spinner("Evaluating student answers..."):
                 try:
@@ -616,8 +636,8 @@ with tab2:
                     st.session_state["evaluation"] = evaluation
 
                 except Exception as e:
-                    st.error("Error evaluating answers.")
-                    st.code(str(e))
+                    st.error("❌ Failed to Evaluate Answers")
+                    st.warning(str(e))
 
     if "evaluation" in st.session_state:
         st.divider()
