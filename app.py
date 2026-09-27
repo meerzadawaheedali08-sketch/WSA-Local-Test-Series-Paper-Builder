@@ -1,6 +1,6 @@
+import html
 import io
 import os
-import html
 import docx
 import pypdf
 import reportlab
@@ -149,7 +149,7 @@ st.markdown(
 
 
 # ============================================================
-# PDF GENERATOR FUNCTION WITH HADITH FOOTER (FIXED HTML ESCAPING)
+# PDF GENERATOR FUNCTION WITH HADITH FOOTER (FIXED UNICODE & HTML ESCAPING)
 # ============================================================
 
 
@@ -225,7 +225,8 @@ def create_pdf_from_text(title, content):
 
     story = [
         Paragraph(
-            "<b>Generated via WSA Educational Test Series &amp; Paper Builder (AI-Powered)</b>",
+            "<b>Generated via WSA Educational Test Series &amp; Paper Builder"
+            " (AI-Powered)</b>",
             app_meta_style,
         ),
         Spacer(1, 4),
@@ -260,19 +261,22 @@ def create_pdf_from_text(title, content):
     )
     story.append(
         Paragraph(
-            '<i>"Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."</i>',
+            '<i>"Whoever travels a path in search of knowledge, Allah will make'
+            ' easy for him a path to Paradise."</i>',
             pdf_hadith_style,
         )
     )
     story.append(
         Paragraph(
-            "— Prophet Muhammad (PBUH) | <b>Sahih Muslim, Book 35, Hadith 6518</b>",
+            "— Prophet Muhammad (PBUH) | <b>Sahih Muslim, Book 35, Hadith"
+            " 6518</b>",
             pdf_hadith_ref,
         )
     )
     story.append(
         Paragraph(
-            "<b>Designed by Waheed Ali Hamouzai</b> • WSA Educational Community",
+            "<b>Designed by Waheed Ali Hamouzai</b> • WSA Educational"
+            " Community",
             footer_style,
         )
     )
@@ -327,7 +331,7 @@ def process_uploaded_file(uploaded_file):
 
 
 # ============================================================
-# GEMINI API CALL FUNCTION WITH MULTI-MODEL FALLBACK (FIXED MODELS)
+# GEMINI API CALL FUNCTION WITH UNICODE ENCODING FIX & FALLBACK
 # ============================================================
 
 
@@ -340,7 +344,19 @@ def call_gemini_api(
 ):
     client = genai.Client(api_key=api_key)
 
-    # Gemini Models list for automatic fallback (Deprecated models removed)
+    # UNICODE / EMOJI ENCODING FIX:
+    # ASCII error se bachne ke liye string ko UTF-8 format main clean kar rahe hain
+    if isinstance(prompt_text, str):
+        prompt_text = prompt_text.encode("utf-8", errors="ignore").decode(
+            "utf-8"
+        )
+
+    if isinstance(system_instruction, str):
+        system_instruction = system_instruction.encode(
+            "utf-8", errors="ignore"
+        ).decode("utf-8")
+
+    # Gemini Models list for automatic fallback
     fallback_models = [
         "gemini-2.5-flash",
         "gemini-2.0-flash",
