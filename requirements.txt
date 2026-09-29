@@ -4,3 +4,5 @@ openai
 python-docx
 pypdf
 reportlab
+arabic-reshaper
+python-bidi
