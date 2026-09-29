@@ -1,13 +1,12 @@
 import html
 import io
 import os
+
 import docx
 import pypdf
-import reportlab
 import streamlit as st
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 # PDF Generation Imports
 from reportlab.lib import colors
@@ -27,6 +26,43 @@ st.set_page_config(
     layout="wide",
 )
 
+# ============================================================
+# LLM PROVIDERS CONFIG (all use OpenAI-compatible endpoints)
+# ------------------------------------------------------------
+# Model names / free limits change often. Agar koi model "not found"
+# de, toh sidebar ke "Custom Model ID" mai naya model ka naam likh do.
+#   Groq:        https://console.groq.com/keys
+#   Gemini:      https://aistudio.google.com/apikey
+#   OpenRouter:  https://openrouter.ai/keys
+# ============================================================
+
+PROVIDERS = {
+    "Groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "env": "GROQ_API_KEY",
+        "models": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"],
+    },
+    "Gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "env": "GEMINI_API_KEY",
+        "models": ["gemini-3.5-flash", "gemini-3.5-flash-lite"],
+    },
+    "OpenRouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "env": "OPENROUTER_API_KEY",
+        "models": [
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+        ],
+    },
+}
+
+AUTO_MODE = "Auto (Fallback)"
+AUTO_ORDER = ["Groq", "Gemini", "OpenRouter"]
+
+# Free tiers ki token limits chhoti hoti hain, isliye reference text cap
+MAX_REFERENCE_CHARS = 12000
+
 
 # ============================================================
 # CUSTOM CSS
@@ -35,36 +71,18 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .stApp {
-            background-color: #F8FAFC;
-        }
+        .stApp { background-color: #F8FAFC; }
 
         .hero-container {
-            background: linear-gradient(
-                135deg,
-                #1E3A8A 0%,
-                #3B82F6 100%
-            );
+            background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
             padding: 28px 32px;
             border-radius: 12px;
             color: white;
             box-shadow: 0 4px 12px rgba(30, 58, 138, 0.15);
             margin-bottom: 25px;
         }
-
-        .hero-title {
-            font-size: 2.3rem;
-            font-weight: 800;
-            margin: 0;
-            letter-spacing: -0.5px;
-        }
-
-        .hero-subtitle {
-            font-size: 1.05rem;
-            opacity: 0.9;
-            margin-top: 8px;
-            margin-bottom: 0;
-        }
+        .hero-title { font-size: 2.3rem; font-weight: 800; margin: 0; letter-spacing: -0.5px; }
+        .hero-subtitle { font-size: 1.05rem; opacity: 0.9; margin-top: 8px; margin-bottom: 0; }
 
         .edu-card {
             background-color: #FFFFFF;
@@ -75,13 +93,8 @@ st.markdown(
             margin-bottom: 20px;
         }
 
-        /* BRANDING & HADITH FOOTER CARD */
         .branding-card {
-            background: linear-gradient(
-                135deg,
-                #0F172A 0%,
-                #1E293B 100%
-            );
+            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             color: #F8FAFC;
             padding: 24px 20px;
             border-radius: 12px;
@@ -90,52 +103,14 @@ st.markdown(
             margin-top: 40px;
             box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.3);
         }
-
-        .hadith-quote {
-            font-size: 1.02rem;
-            font-style: italic;
-            font-weight: 500;
-            color: #F1F5F9;
-            line-height: 1.6;
-            margin-bottom: 6px;
-        }
-
-        .hadith-ref {
-            font-size: 0.82rem;
-            color: #60A5FA;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-            margin-bottom: 16px;
-        }
-
-        .footer-divider {
-            border: 0;
-            border-top: 1px solid #334155;
-            margin: 16px auto;
-            width: 80%;
-        }
-
-        .branding-name {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #38BDF8;
-            margin-bottom: 4px;
-            letter-spacing: 0.2px;
-        }
-
-        .branding-tag {
-            font-size: 0.82rem;
-            color: #94A3B8;
-            letter-spacing: 0.6px;
-            text-transform: uppercase;
-        }
+        .hadith-quote { font-size: 1.02rem; font-style: italic; font-weight: 500; color: #F1F5F9; line-height: 1.6; margin-bottom: 6px; }
+        .hadith-ref { font-size: 0.82rem; color: #60A5FA; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 16px; }
+        .footer-divider { border: 0; border-top: 1px solid #334155; margin: 16px auto; width: 80%; }
+        .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; letter-spacing: 0.2px; }
+        .branding-tag { font-size: 0.82rem; color: #94A3B8; letter-spacing: 0.6px; text-transform: uppercase; }
 
         .stButton > button {
-            background: linear-gradient(
-                135deg,
-                #2563EB 0%,
-                #1D4ED8 100%
-            );
+            background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
             color: white;
             font-weight: 600;
             border-radius: 8px;
@@ -149,12 +124,17 @@ st.markdown(
 
 
 # ============================================================
-# PDF GENERATOR FUNCTION WITH HADITH FOOTER (FIXED UNICODE & HTML ESCAPING)
+# PDF GENERATOR FUNCTION WITH HADITH FOOTER
 # ============================================================
 
 
 def create_pdf_from_text(title, content):
-    """Converts markdown/text content into a downloadable PDF binary stream with Hadith and author branding."""
+    """Converts markdown/text content into a downloadable PDF binary stream with Hadith and author branding.
+
+    NOTE: Default reportlab fonts Urdu/Arabic script render nahi karte.
+    Urdu PDF ke liye Noto Naskh Arabic jaisa TTF font register karna hoga
+    (+ arabic_reshaper aur python-bidi).
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -175,7 +155,6 @@ def create_pdf_from_text(title, content):
         alignment=1,
         spaceAfter=10,
     )
-
     title_style = ParagraphStyle(
         "TitleStyle",
         parent=styles["Heading1"],
@@ -184,7 +163,6 @@ def create_pdf_from_text(title, content):
         spaceAfter=15,
         alignment=1,
     )
-
     body_style = ParagraphStyle(
         "BodyStyle",
         parent=styles["Normal"],
@@ -193,7 +171,6 @@ def create_pdf_from_text(title, content):
         textColor=colors.HexColor("#1E293B"),
         spaceAfter=8,
     )
-
     pdf_hadith_style = ParagraphStyle(
         "PdfHadithStyle",
         parent=styles["Normal"],
@@ -204,7 +181,6 @@ def create_pdf_from_text(title, content):
         spaceBefore=12,
         spaceAfter=2,
     )
-
     pdf_hadith_ref = ParagraphStyle(
         "PdfHadithRef",
         parent=styles["Normal"],
@@ -213,7 +189,6 @@ def create_pdf_from_text(title, content):
         alignment=1,
         spaceAfter=10,
     )
-
     footer_style = ParagraphStyle(
         "FooterStyle",
         parent=styles["Normal"],
@@ -234,11 +209,9 @@ def create_pdf_from_text(title, content):
         Spacer(1, 10),
     ]
 
-    lines = content.split("\n")
-    for line in lines:
+    for line in content.split("\n"):
         clean_line = line.strip()
         if clean_line:
-            # HTML Characters Safe Escaping
             clean_line = html.escape(clean_line)
 
             # Handle bold markdown (**bold**)
@@ -246,19 +219,16 @@ def create_pdf_from_text(title, content):
                 clean_line = clean_line.replace("**", "<b>", 1)
                 if "**" in clean_line:
                     clean_line = clean_line.replace("**", "</b>", 1)
+                else:
+                    # unmatched ** -> close the tag so reportlab doesn't fail
+                    clean_line += "</b>"
 
             story.append(Paragraph(clean_line, body_style))
         else:
             story.append(Spacer(1, 6))
 
-    # Hadith & Branding Section in Generated PDF
     story.append(Spacer(1, 15))
-    story.append(
-        Paragraph(
-            "_________________________________________________________________________________",
-            app_meta_style,
-        )
-    )
+    story.append(Paragraph("_" * 80, app_meta_style))
     story.append(
         Paragraph(
             '<i>"Whoever travels a path in search of knowledge, Allah will make'
@@ -305,8 +275,8 @@ def process_uploaded_file(uploaded_file):
 
     elif filename.endswith(".docx"):
         try:
-            doc = docx.Document(uploaded_file)
-            full_text = [p.text for p in doc.paragraphs if p.text]
+            document = docx.Document(uploaded_file)
+            full_text = [p.text for p in document.paragraphs if p.text]
             return "\n".join(full_text).strip()
         except Exception:
             return ""
@@ -323,69 +293,77 @@ def process_uploaded_file(uploaded_file):
         except Exception:
             text = ""
 
-        if len(text) > 15000:
-            text = text[:15000]
-        return text
+        return text[:MAX_REFERENCE_CHARS]
 
     return ""
 
 
 # ============================================================
-# GEMINI API CALL FUNCTION WITH UNICODE ENCODING FIX & FALLBACK
+# UNIVERSAL LLM CALL (Groq / Gemini / OpenRouter) WITH FALLBACK
 # ============================================================
 
 
-def call_gemini_api(
-    api_key,
+def call_llm(
+    llm_cfg,
     prompt_text,
     system_instruction="You are an expert educational examiner.",
     temperature=0.3,
-    selected_model="Auto (Fallback)",
 ):
-    client = genai.Client(api_key=api_key)
+    """
+    llm_cfg = {
+        "keys": {"Groq": "...", "Gemini": "...", "OpenRouter": "..."},
+        "provider": "Auto (Fallback)" | "Groq" | "Gemini" | "OpenRouter",
+        "custom_model": "" (optional),
+    }
+    """
+    keys = llm_cfg["keys"]
+    provider_choice = llm_cfg["provider"]
+    custom_model = (llm_cfg.get("custom_model") or "").strip()
 
-    # UNICODE / EMOJI ENCODING FIX:
-    # ASCII error se bachne ke liye string ko UTF-8 format main clean kar rahe hain
-    if isinstance(prompt_text, str):
-        prompt_text = prompt_text.encode("utf-8", errors="ignore").decode(
-            "utf-8"
+    # Which providers to try, in order
+    if provider_choice == AUTO_MODE:
+        provider_order = [p for p in AUTO_ORDER if keys.get(p)]
+    else:
+        provider_order = [provider_choice] if keys.get(provider_choice) else []
+
+    if not provider_order:
+        raise Exception(
+            "Koi API key nahi mili. Sidebar mai kam az kam ek provider ki key dalo."
         )
 
-    if isinstance(system_instruction, str):
-        system_instruction = system_instruction.encode(
-            "utf-8", errors="ignore"
-        ).decode("utf-8")
+    errors = []
 
-    # Gemini Models list for automatic fallback
-    fallback_models = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-    ]
+    for provider in provider_order:
+        cfg = PROVIDERS[provider]
+        client = OpenAI(
+            api_key=keys[provider], base_url=cfg["base_url"], timeout=90
+        )
 
-    # If user selected a specific model manually, try that model first
-    if selected_model != "Auto (Fallback)" and selected_model in fallback_models:
-        fallback_models = [selected_model] + [
-            m for m in fallback_models if m != selected_model
-        ]
+        # Custom model sirf tab use hoga jab user ne specific provider select kiya ho
+        if custom_model and provider_choice == provider:
+            models_to_try = [custom_model]
+        else:
+            models_to_try = cfg["models"]
 
-    last_error = None
+        for model_name in models_to_try:
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": prompt_text},
+                    ],
+                    temperature=temperature,
+                )
+                text = response.choices[0].message.content
+                if text and text.strip():
+                    return text
+                errors.append(f"{provider}/{model_name}: empty response")
+            except Exception as e:
+                errors.append(f"{provider}/{model_name}: {str(e)[:160]}")
+                continue
 
-    for model_name in fallback_models:
-        try:
-            config = types.GenerateContentConfig(
-                system_instruction=system_instruction, temperature=temperature
-            )
-            response = client.models.generate_content(
-                model=model_name, contents=prompt_text, config=config
-            )
-            if response and response.text:
-                return response.text
-        except Exception as e:
-            last_error = e
-            continue  # Fallback to the next model in list
-
-    raise Exception(f"All Gemini models failed. Last error: {last_error}")
+    raise Exception("Sab providers fail ho gaye:\n- " + "\n- ".join(errors))
 
 
 # ============================================================
@@ -394,7 +372,7 @@ def call_gemini_api(
 
 
 def generate_test_paper(
-    api_key,
+    llm_cfg,
     topic,
     uploaded_pdf,
     test_type,
@@ -403,11 +381,9 @@ def generate_test_paper(
     short_count,
     long_count,
     diff_level,
-    selected_model,
 ):
     pdf_text = process_uploaded_file(uploaded_pdf)
 
-    language_instruction = ""
     if language == "Urdu":
         language_instruction = (
             "Generate the complete test paper strictly in URDU language."
@@ -419,6 +395,8 @@ def generate_test_paper(
         )
     else:
         language_instruction = "Generate the test paper in ENGLISH language."
+
+    reference_block = f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""
 
     prompt = f"""
 Create a professional examination paper.
@@ -441,11 +419,11 @@ REQUIREMENTS:
 2. Short and Long questions should be clear and well-structured.
 3. Provide a complete ANSWER KEY at the bottom.
 
-{f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""}
+{reference_block}
 """
 
-    return call_gemini_api(
-        api_key=api_key,
+    return call_llm(
+        llm_cfg,
         prompt_text=prompt,
         system_instruction=(
             "You are an expert examiner for educational boards and competitive"
@@ -453,11 +431,10 @@ REQUIREMENTS:
             " Urdu, and Bilingual formats."
         ),
         temperature=0.3,
-        selected_model=selected_model,
     )
 
 
-def evaluate_student_answers(api_key, paper_text, answers_text, selected_model):
+def evaluate_student_answers(llm_cfg, paper_text, answers_text):
     prompt = f"""
 Evaluate the student's answer sheet against the provided question paper and answer key.
 
@@ -474,26 +451,28 @@ Provide a structured evaluation report:
 - Strengths & Weaknesses
 """
 
-    return call_gemini_api(
-        api_key=api_key,
+    return call_llm(
+        llm_cfg,
         prompt_text=prompt,
         system_instruction=(
             "You are an experienced examiner evaluating student answers"
             " accurately and providing constructive feedback."
         ),
         temperature=0.2,
-        selected_model=selected_model,
     )
 
 
-def analyze_random_test(
-    api_key, test_content, additional_context="", selected_model="Auto (Fallback)"
-):
+def analyze_random_test(llm_cfg, test_content, additional_context=""):
+    context = (
+        additional_context
+        if additional_context
+        else "General test analysis and performance diagnostic."
+    )
     prompt = f"""
 Analyze the following random test paper, solved sheet, or test result provided by the user.
 
 USER CONTEXT / GOAL:
-{additional_context if additional_context else "General test analysis and performance diagnostic."}
+{context}
 
 TEST DATA / CONTENT:
 {test_content}
@@ -506,15 +485,14 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
 5. 💡 **Recommended Resources & Next Steps**: Suggested topics to solve next or key formulas/concepts to memorize.
 """
 
-    return call_gemini_api(
-        api_key=api_key,
+    return call_llm(
+        llm_cfg,
         prompt_text=prompt,
         system_instruction=(
             "You are a senior academic mentor and diagnostic expert specializing"
             " in test analysis and student performance optimization."
         ),
         temperature=0.3,
-        selected_model=selected_model,
     )
 
 
@@ -524,27 +502,41 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    env_api_key = os.getenv("GEMINI_API_KEY", "")
-    api_key_input = st.text_input(
-        "Enter GEMINI API Key", value=env_api_key, type="password"
-    )
-    api_key = api_key_input or env_api_key
 
-    selected_model = st.selectbox(
-        "🤖 Select Gemini Model",
-        [
-            "Auto (Fallback)",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-        ],
+    provider_choice = st.selectbox(
+        "🤖 AI Provider",
+        [AUTO_MODE] + list(PROVIDERS.keys()),
         help=(
-            "Agar 'Auto (Fallback)' select hoga, toh system ek model fail hone par"
-            " doosre model par shift ho jayega."
+            "Auto mode mai jis provider ki key di hogi, wo order se try honge:"
+            " Groq → Gemini → OpenRouter. Ek fail ho toh agla chalega."
         ),
     )
 
-    # Sidebar Footer (Hadith & Branding)
+    st.caption("Kam az kam ek key dalo (teeno free mil jati hain):")
+    keys = {}
+    for provider_name, cfg in PROVIDERS.items():
+        keys[provider_name] = st.text_input(
+            f"{provider_name} API Key",
+            value=os.getenv(cfg["env"], ""),
+            type="password",
+            key=f"key_{provider_name}",
+        ).strip()
+
+    custom_model = ""
+    if provider_choice != AUTO_MODE:
+        custom_model = st.text_input(
+            "Custom Model ID (optional)",
+            placeholder=PROVIDERS[provider_choice]["models"][0],
+            help="Agar default model kaam na kare toh yahan naya model ID likho.",
+        )
+
+    llm_cfg = {
+        "keys": keys,
+        "provider": provider_choice,
+        "custom_model": custom_model,
+    }
+    has_any_key = any(keys.values())
+
     st.markdown("---")
     st.markdown(
         """
@@ -575,6 +567,8 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+NO_KEY_MSG = "⚠️ Please enter at least one API key (Groq / Gemini / OpenRouter) in the sidebar."
+
 st.markdown(
     """<div class="hero-container">
 <div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
@@ -583,11 +577,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3 = st.tabs([
-    "📝 Generate Test Paper",
-    "📊 Evaluate Student Answers",
-    "🎯 Quick Test Diagnostic & Focus Areas",
-])
+tab1, tab2, tab3 = st.tabs(
+    [
+        "📝 Generate Test Paper",
+        "📊 Evaluate Student Answers",
+        "🎯 Quick Test Diagnostic & Focus Areas",
+    ]
+)
 
 
 # ============================================================
@@ -638,17 +634,15 @@ with tab1:
     st.markdown("</div>", unsafe_allow_html=True)
 
     if st.button("🚀 Generate Test Paper", use_container_width=True):
-        if not api_key:
-            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
         elif not topic.strip():
             st.error("⚠️ Please enter a topic or subject name.")
         else:
-            with st.spinner(
-                "Generating test paper via Gemini AI... Please wait."
-            ):
+            with st.spinner("Generating test paper via AI... Please wait."):
                 try:
                     res = generate_test_paper(
-                        api_key,
+                        llm_cfg,
                         topic,
                         uploaded_pdf,
                         test_type,
@@ -657,7 +651,6 @@ with tab1:
                         short_count,
                         long_count,
                         diff_level,
-                        selected_model,
                     )
                     st.session_state["generated_paper"] = res
                 except Exception as e:
@@ -726,8 +719,8 @@ with tab2:
         )
 
     if st.button("📊 Evaluate Answers", use_container_width=True):
-        if not api_key:
-            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
         else:
             p_text = process_uploaded_file(paper_file)
             final_p_text = p_text or question_paper_text.strip()
@@ -747,11 +740,11 @@ with tab2:
                 )
             else:
                 with st.spinner(
-                    "Evaluating student answers via Gemini AI... Please wait."
+                    "Evaluating student answers via AI... Please wait."
                 ):
                     try:
                         eval_res = evaluate_student_answers(
-                            api_key, final_p_text, final_a_text, selected_model
+                            llm_cfg, final_p_text, final_a_text
                         )
                         st.session_state["evaluation"] = eval_res
                     except Exception as e:
@@ -828,8 +821,8 @@ with tab3:
         )
 
     if st.button("🔍 Analyze Test & Generate Focus Plan", use_container_width=True):
-        if not api_key:
-            st.error("⚠️ Please enter a valid Gemini API key in the sidebar.")
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
         else:
             extracted_test = process_uploaded_file(random_test_file)
             final_test_content = extracted_test or random_test_text.strip()
@@ -843,7 +836,7 @@ with tab3:
                 ):
                     try:
                         diag_res = analyze_random_test(
-                            api_key, final_test_content, user_context, selected_model
+                            llm_cfg, final_test_content, user_context
                         )
                         st.session_state["diagnostic_analysis"] = diag_res
                     except Exception as e:
