@@ -1,18 +1,43 @@
 import html
 import io
+import json
 import os
+import re
 
 import docx
 import pypdf
 import streamlit as st
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm, Pt, RGBColor
 from dotenv import load_dotenv
 from openai import OpenAI
 
 # PDF Generation Imports
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from reportlab.lib.fonts import addMapping
+
+# Urdu / Arabic script support in PDF (optional - app bina iske bhi chalti hai)
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+
+    RTL_OK = True
+except Exception:
+    RTL_OK = False
 
 # ============================================================
 # LOAD ENVIRONMENT VARIABLES & PAGE CONFIG
@@ -61,7 +86,9 @@ AUTO_MODE = "Auto (Fallback)"
 AUTO_ORDER = ["Groq", "Gemini", "OpenRouter"]
 
 # Free tiers ki token limits chhoti hoti hain, isliye reference text cap
-MAX_REFERENCE_CHARS = 12000
+MAX_REFERENCE_CHARS = 9000
+
+LETTERS = "ABCD"
 
 
 # ============================================================
@@ -124,134 +151,796 @@ st.markdown(
 
 
 # ============================================================
-# PDF GENERATOR FUNCTION WITH HADITH FOOTER
+# PDF FONT + URDU (RTL) HELPERS
+# ============================================================
+
+
+def register_pdf_fonts():
+    """Unicode font dhoondta hai (Windows Arial / Linux DejaVu). Na mile toh Helvetica."""
+    candidates = [
+        (
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/ariali.ttf",
+            "C:/Windows/Fonts/arialbi.ttf",
+        ),
+        (
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+        ),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        ),
+    ]
+    for reg, bold, ital, bi in candidates:
+        if all(os.path.exists(p) for p in (reg, bold, ital, bi)):
+            try:
+                pdfmetrics.registerFont(TTFont("WSA", reg))
+                pdfmetrics.registerFont(TTFont("WSA-B", bold))
+                pdfmetrics.registerFont(TTFont("WSA-I", ital))
+                pdfmetrics.registerFont(TTFont("WSA-BI", bi))
+                addMapping("WSA", 0, 0, "WSA")
+                addMapping("WSA", 1, 0, "WSA-B")
+                addMapping("WSA", 0, 1, "WSA-I")
+                addMapping("WSA", 1, 1, "WSA-BI")
+                return "WSA", "WSA-B", "WSA-I"
+            except Exception:
+                continue
+    return "Helvetica", "Helvetica-Bold", "Helvetica-Oblique"
+
+
+PDF_FONT, PDF_FONT_B, PDF_FONT_I = register_pdf_fonts()
+
+ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]")
+EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]"
+)
+
+
+def is_rtl_line(line):
+    letters = [c for c in line if c.isalpha()]
+    if not letters:
+        return False
+    arabic = sum(1 for c in letters if ARABIC_RE.match(c))
+    return arabic / len(letters) > 0.5
+
+
+def shape_text(line):
+    """Urdu/Arabic text ko PDF ke liye sahi shakal deta hai (joined letters + RTL)."""
+    if RTL_OK and ARABIC_RE.search(line):
+        try:
+            return get_display(arabic_reshaper.reshape(line))
+        except Exception:
+            return line
+    return line
+
+
+def clean_text(text):
+    """AI ke output se markdown ki ** aur ` hata deta hai."""
+    text = str(text or "")
+    text = text.replace("**", "").replace("`", "")
+    return text.strip()
+
+
+def rich(text, style):
+    """Safe Paragraph: HTML escape + Urdu shaping + line breaks."""
+    lines = clean_text(text).split("\n")
+    body = "<br/>".join(html.escape(shape_text(ln), quote=False) for ln in lines)
+    non_empty = [ln for ln in lines if ln.strip()]
+    if RTL_OK and non_empty and all(is_rtl_line(ln) for ln in non_empty):
+        style = ParagraphStyle(
+            name=style.name + "_rtl", parent=style, alignment=TA_RIGHT
+        )
+    return Paragraph(body, style)
+
+
+# ============================================================
+# PROMPT + JSON PARSING FOR STRUCTURED PAPER
+# ============================================================
+
+JSON_SCHEMA_TEXT = """{
+  "mcqs":  [ {"q": "question text", "options": ["option 1", "option 2", "option 3", "option 4"], "answer": "B"} ],
+  "short": [ {"q": "question text", "answer": "model answer in 2-3 lines"} ],
+  "long":  [ {"q": "question text (use (a), (b), (c) parts on new lines if suitable)", "answer": "key points of model answer"} ]
+}"""
+
+
+def normalize_paper(obj, mcq_count, short_count, long_count):
+    """AI ke JSON ko saaf-suthri aur safe structure mai badalta hai."""
+    mcqs = []
+    for item in obj.get("mcqs") or []:
+        if not isinstance(item, dict):
+            continue
+        q = clean_text(item.get("q") or item.get("question") or "")
+        opts = item.get("options") or []
+        if isinstance(opts, dict):
+            opts = [opts[k] for k in sorted(opts)]
+        cleaned = []
+        for i, o in enumerate(list(opts)[:4]):
+            o = clean_text(o)
+            m = re.match(r"^\(?([A-Da-d])[\)\.:]\s+", o)
+            # sirf tab prefix hatao jab wo us position ka sahi letter ho
+            if m and m.group(1).upper() == LETTERS[i]:
+                o = o[m.end():].strip()
+            cleaned.append(o)
+        if not q or len(cleaned) < 2:
+            continue
+
+        ans = clean_text(item.get("answer", ""))
+        letter = ""
+        m = re.match(r"^\(?([A-Da-d])\)?(?:[\)\.:\s-]|$)", ans)
+        if m:
+            letter = m.group(1).upper()
+        else:
+            for i, o in enumerate(cleaned):
+                if ans and ans.lower() == o.lower():
+                    letter = LETTERS[i]
+                    break
+        if letter and LETTERS.index(letter) >= len(cleaned):
+            letter = ""
+        mcqs.append({"q": q, "options": cleaned, "answer": letter or "?"})
+
+    def simple_items(key):
+        out = []
+        for item in obj.get(key) or []:
+            if isinstance(item, str):
+                item = {"q": item}
+            if not isinstance(item, dict):
+                continue
+            q = clean_text(item.get("q") or item.get("question") or "")
+            a = item.get("answer", "")
+            if isinstance(a, list):
+                a = "\n".join(str(x) for x in a)
+            if q:
+                out.append({"q": q, "answer": clean_text(a)})
+        return out
+
+    return {
+        "mcqs": mcqs[:mcq_count],
+        "short": simple_items("short")[:short_count],
+        "long": simple_items("long")[:long_count],
+    }
+
+
+def parse_paper_json(raw, mcq_count, short_count, long_count):
+    txt = (raw or "").strip()
+    txt = re.sub(r"^```(?:json)?", "", txt, flags=re.I).strip()
+    txt = re.sub(r"```$", "", txt).strip()
+    start, end = txt.find("{"), txt.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("JSON not found in AI response")
+    obj = json.loads(txt[start : end + 1])
+    return normalize_paper(obj, mcq_count, short_count, long_count)
+
+
+# ============================================================
+# PAPER -> TEXT / MARKDOWN (on-screen + txt download)
+# ============================================================
+
+INSTRUCTIONS = [
+    "Attempt all questions.",
+    "In MCQs, choose only one correct option.",
+    "Write neatly and clearly. Cutting / overwriting will not be entertained.",
+]
+
+
+def section_list(data, meta):
+    """Har section: (letter, title, marks_text, kind, items)."""
+    out = []
+    letters = iter("ABC")
+    if data["mcqs"]:
+        n, m = len(data["mcqs"]), meta["mcq_marks"]
+        out.append(
+            (
+                next(letters),
+                "Multiple Choice Questions",
+                f"{n} × {m} = {n * m} Marks",
+                "mcq",
+                data["mcqs"],
+            )
+        )
+    if data["short"]:
+        n, m = len(data["short"]), meta["short_marks"]
+        out.append(
+            (
+                next(letters),
+                "Short Questions",
+                f"{n} × {m} = {n * m} Marks",
+                "short",
+                data["short"],
+            )
+        )
+    if data["long"]:
+        n, m = len(data["long"]), meta["long_marks"]
+        out.append(
+            (
+                next(letters),
+                "Long Questions",
+                f"{n} × {m} = {n * m} Marks",
+                "long",
+                data["long"],
+            )
+        )
+    return out
+
+
+def compute_total_marks(data, meta):
+    return (
+        len(data["mcqs"]) * meta["mcq_marks"]
+        + len(data["short"]) * meta["short_marks"]
+        + len(data["long"]) * meta["long_marks"]
+    )
+
+
+def answer_key_lines(data, meta):
+    lines = []
+    for letter, title, _marks, kind, items in section_list(data, meta):
+        lines.append(f"SECTION {letter} — {title}")
+        if kind == "mcq":
+            for i, it in enumerate(items, 1):
+                lines.append(f"  Q{i}: {it['answer']}")
+        else:
+            for i, it in enumerate(items, 1):
+                lines.append(f"  Q{i}: {it['answer'] or '-'}")
+        lines.append("")
+    return lines
+
+
+def paper_to_text(data, meta, include_key=True):
+    L = [
+        meta["institute"].upper(),
+        meta["category"],
+        "=" * 64,
+        f"Subject: {meta['topic']}",
+        f"Time Allowed: {meta['time_min']} Minutes    Total Marks: {meta['total_marks']}",
+        "Name: ______________________   Roll No: __________   Date: __________",
+        "=" * 64,
+        "Instructions:",
+    ]
+    L += [f"  {i}. {t}" for i, t in enumerate(INSTRUCTIONS, 1)]
+    L.append("")
+
+    for letter, title, marks, kind, items in section_list(data, meta):
+        L.append(f"SECTION {letter} — {title}   ({marks})")
+        L.append("-" * 64)
+        for i, it in enumerate(items, 1):
+            L.append(f"Q{i}. {it['q']}")
+            if kind == "mcq":
+                for j, opt in enumerate(it["options"]):
+                    L.append(f"     ({LETTERS[j]}) {opt}")
+            L.append("")
+        L.append("")
+
+    L.append("— End of Paper —")
+
+    if include_key:
+        L += ["", "=" * 64, "ANSWER KEY (Teacher Copy)", "=" * 64]
+        L += answer_key_lines(data, meta)
+    return "\n".join(L)
+
+
+def paper_to_markdown(data, meta):
+    """Screen par dikhane ke liye (options har line par, sequence mai)."""
+
+    def br(t):
+        return t.replace("\n", "  \n")
+
+    L = [
+        f"## 🎓 {meta['institute']}",
+        f"**{meta['category']}**",
+        "",
+        f"**Subject:** {meta['topic']}  |  **Time:** {meta['time_min']} min  |  "
+        f"**Total Marks:** {meta['total_marks']}",
+        "",
+        "**Instructions:** " + " ".join(INSTRUCTIONS),
+        "",
+        "---",
+    ]
+    for letter, title, marks, kind, items in section_list(data, meta):
+        L += ["", f"### Section {letter}: {title} *({marks})*", ""]
+        for i, it in enumerate(items, 1):
+            L.append(f"**Q{i}.** {br(it['q'])}")
+            if kind == "mcq":
+                L.append("")
+                for j, opt in enumerate(it["options"]):
+                    L.append(f"&nbsp;&nbsp;&nbsp;&nbsp;**({LETTERS[j]})** {br(opt)}  ")
+            L.append("")
+    return "\n".join(L)
+
+
+def answer_key_markdown(data, meta):
+    L = []
+    for letter, title, _marks, kind, items in section_list(data, meta):
+        L.append(f"**Section {letter}: {title}**")
+        if kind == "mcq":
+            L.append(
+                "  ".join(f"`Q{i}: {it['answer']}`" for i, it in enumerate(items, 1))
+            )
+        else:
+            for i, it in enumerate(items, 1):
+                L.append(f"- **Q{i}:** {it['answer'] or '-'}".replace("\n", " "))
+        L.append("")
+    return "\n".join(L)
+
+
+# ============================================================
+# PROFESSIONAL PDF (question paper / answer key)
+# ============================================================
+
+NAVY = colors.HexColor("#1E3A8A")
+SLATE = colors.HexColor("#334155")
+LIGHT = colors.HexColor("#E8EEF9")
+GRID = colors.HexColor("#94A3B8")
+
+
+def pdf_styles():
+    base = getSampleStyleSheet()["Normal"]
+
+    def mk(name, **kw):
+        kw.setdefault("fontName", PDF_FONT)
+        kw.setdefault("fontSize", 10.5)
+        kw.setdefault("leading", 14)
+        kw.setdefault("textColor", colors.HexColor("#0F172A"))
+        return ParagraphStyle(name, parent=base, **kw)
+
+    return {
+        "inst": mk("inst", fontName=PDF_FONT_B, fontSize=17, leading=21,
+                   textColor=NAVY, alignment=TA_CENTER),
+        "exam": mk("exam", fontName=PDF_FONT_B, fontSize=11.5, leading=15,
+                   textColor=SLATE, alignment=TA_CENTER, spaceAfter=6),
+        "cell": mk("cell", fontSize=9.5, leading=12.5),
+        "cellb": mk("cellb", fontName=PDF_FONT_B, fontSize=9.5, leading=12.5),
+        "sec": mk("sec", fontName=PDF_FONT_B, fontSize=11, textColor=NAVY),
+        "secr": mk("secr", fontName=PDF_FONT_B, fontSize=10, textColor=NAVY,
+                   alignment=TA_RIGHT),
+        "qn": mk("qn", fontName=PDF_FONT_B),
+        "q": mk("q"),
+        "opt": mk("opt", fontSize=10.2, leading=13.5),
+        "small": mk("small", fontSize=8.5, leading=11.5, textColor=SLATE),
+        "center": mk("center", fontSize=9, alignment=TA_CENTER, textColor=SLATE),
+        "hadith": mk("hadith", fontName=PDF_FONT_I, fontSize=8.5, leading=12,
+                     alignment=TA_CENTER, textColor=SLATE),
+        "hadithref": mk("hadithref", fontSize=7.5, alignment=TA_CENTER,
+                        textColor=colors.HexColor("#2563EB")),
+    }
+
+
+def _page_footer(canvas, doc):
+    canvas.saveState()
+    w, _h = A4
+    canvas.setStrokeColor(GRID)
+    canvas.setLineWidth(0.4)
+    canvas.line(18 * mm, 14 * mm, w - 18 * mm, 14 * mm)
+    canvas.setFont(PDF_FONT, 8)
+    canvas.setFillColor(SLATE)
+    canvas.drawString(18 * mm, 9.5 * mm, "WSA Educational Test Series")
+    canvas.drawCentredString(w / 2, 9.5 * mm, f"Page {doc.page}")
+    canvas.drawRightString(w - 18 * mm, 9.5 * mm, "Designed by Waheed Ali Hamouzai")
+    canvas.restoreState()
+
+
+def _header_flowables(meta, S, width, title_line, with_student_fields=True):
+    fl = [
+        rich(meta["institute"].upper(), S["inst"]),
+        rich(title_line, S["exam"]),
+    ]
+    rows = [
+        [
+            rich("Subject / Topic:", S["cellb"]),
+            rich(meta["topic"], S["cell"]),
+            rich("Time Allowed:", S["cellb"]),
+            rich(f"{meta['time_min']} Minutes", S["cell"]),
+        ],
+        [
+            rich("Exam:", S["cellb"]),
+            rich(meta["category"], S["cell"]),
+            rich("Total Marks:", S["cellb"]),
+            rich(str(meta["total_marks"]), S["cell"]),
+        ],
+    ]
+    if with_student_fields:
+        rows.append(
+            [
+                rich("Student Name:", S["cellb"]),
+                rich("", S["cell"]),
+                rich("Roll No:", S["cellb"]),
+                rich("", S["cell"]),
+            ]
+        )
+    cw = [36 * mm, width - 36 * mm - 32 * mm - 32 * mm, 32 * mm, 32 * mm]
+    t = Table(rows, colWidths=cw)
+    t.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.8, NAVY),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, GRID),
+                ("BACKGROUND", (0, 0), (0, -1), LIGHT),
+                ("BACKGROUND", (2, 0), (2, -1), LIGHT),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    fl.append(t)
+    fl.append(Spacer(1, 8))
+    return fl
+
+
+def _section_bar(letter, title, marks, S, width):
+    bar = Table(
+        [
+            [
+                rich(f"SECTION {letter}  —  {title}", S["sec"]),
+                rich(marks, S["secr"]),
+            ]
+        ],
+        colWidths=[width * 0.65, width * 0.35],
+    )
+    bar.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.2, NAVY),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return bar
+
+
+def _question_row(num_label, text, S, width):
+    t = Table(
+        [[rich(num_label, S["qn"]), rich(text, S["q"])]],
+        colWidths=[13 * mm, width - 13 * mm],
+    )
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+    return t
+
+
+def _options_table(options, S, width):
+    indent, lab = 13 * mm, 8 * mm
+    use_two_cols = all(len(o) <= 38 and "\n" not in o for o in options)
+    if use_two_cols:
+        text_w = (width - indent - 2 * lab) / 2
+        rows = []
+        for i in range(0, len(options), 2):
+            row = ["", rich(f"({LETTERS[i]})", S["opt"]), rich(options[i], S["opt"])]
+            if i + 1 < len(options):
+                row += [
+                    rich(f"({LETTERS[i + 1]})", S["opt"]),
+                    rich(options[i + 1], S["opt"]),
+                ]
+            else:
+                row += ["", ""]
+            rows.append(row)
+        t = Table(rows, colWidths=[indent, lab, text_w, lab, text_w])
+    else:
+        text_w = width - indent - lab
+        rows = [
+            ["", rich(f"({LETTERS[i]})", S["opt"]), rich(o, S["opt"])]
+            for i, o in enumerate(options)
+        ]
+        t = Table(rows, colWidths=[indent, lab, text_w])
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+            ]
+        )
+    )
+    return t
+
+
+def _brand_footer(S):
+    return [
+        Spacer(1, 14),
+        rich("— End of Paper —", S["center"]),
+        Spacer(1, 10),
+        rich(
+            '"Whoever travels a path in search of knowledge, Allah will make'
+            ' easy for him a path to Paradise."',
+            S["hadith"],
+        ),
+        rich(
+            "— Prophet Muhammad (PBUH) | Sahih Muslim, Book 35, Hadith 6518",
+            S["hadithref"],
+        ),
+    ]
+
+
+def build_paper_pdf(data, meta, mode="paper"):
+    """mode='paper' -> student question paper, mode='key' -> answer key."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=20 * mm,
+        title=f"{meta['topic']} - {'Answer Key' if mode == 'key' else 'Question Paper'}",
+        author="WSA Educational Test Series",
+    )
+    width = A4[0] - 36 * mm
+    S = pdf_styles()
+    story = []
+
+    if mode == "paper":
+        story += _header_flowables(meta, S, width, meta["category"])
+        inst = Table(
+            [
+                [
+                    rich(
+                        "Instructions:  "
+                        + "  ".join(
+                            f"{i}) {t}" for i, t in enumerate(INSTRUCTIONS, 1)
+                        ),
+                        S["small"],
+                    )
+                ]
+            ],
+            colWidths=[width],
+        )
+        inst.setStyle(
+            TableStyle(
+                [
+                    ("BOX", (0, 0), (-1, -1), 0.5, GRID),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story += [inst, Spacer(1, 10)]
+
+        for letter, title, marks, kind, items in section_list(data, meta):
+            story.append(_section_bar(letter, title, marks, S, width))
+            story.append(Spacer(1, 7))
+            for i, it in enumerate(items, 1):
+                block = [_question_row(f"Q{i}.", it["q"], S, width)]
+                if kind == "mcq":
+                    block.append(_options_table(it["options"], S, width))
+                    block.append(Spacer(1, 7))
+                else:
+                    block.append(Spacer(1, 10 if kind == "short" else 16))
+                story.append(KeepTogether(block))
+            story.append(Spacer(1, 6))
+        story += _brand_footer(S)
+
+    else:  # answer key
+        story += _header_flowables(
+            meta, S, width, "ANSWER KEY (Teacher Copy)", with_student_fields=False
+        )
+        for letter, title, marks, kind, items in section_list(data, meta):
+            story.append(_section_bar(letter, title, marks, S, width))
+            story.append(Spacer(1, 7))
+            if kind == "mcq":
+                per_row = 5
+                cells = [
+                    rich(f"Q{i}:  {it['answer']}", S["cellb"])
+                    for i, it in enumerate(items, 1)
+                ]
+                while len(cells) % per_row:
+                    cells.append("")
+                rows = [
+                    cells[i : i + per_row] for i in range(0, len(cells), per_row)
+                ]
+                t = Table(rows, colWidths=[width / per_row] * per_row)
+                t.setStyle(
+                    TableStyle(
+                        [
+                            ("BOX", (0, 0), (-1, -1), 0.5, GRID),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.3, GRID),
+                            ("TOPPADDING", (0, 0), (-1, -1), 5),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ]
+                    )
+                )
+                story += [t, Spacer(1, 10)]
+            else:
+                for i, it in enumerate(items, 1):
+                    story.append(
+                        KeepTogether(
+                            [
+                                _question_row(f"Q{i}.", it["q"], S, width),
+                                _options_answer(it["answer"], S, width),
+                                Spacer(1, 6),
+                            ]
+                        )
+                    )
+        story.append(Spacer(1, 8))
+
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    buffer.seek(0)
+    return buffer
+
+
+def _options_answer(answer, S, width):
+    t = Table(
+        [["", rich("Ans: " + (answer or "-"), S["small"])]],
+        colWidths=[13 * mm, width - 13 * mm],
+    )
+    t.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    return t
+
+
+# ============================================================
+# WORD (.docx) EXPORT - Urdu ke liye sab se bharosemand option
+# ============================================================
+
+
+def build_paper_docx(data, meta):
+    d = docx.Document()
+    for s in d.sections:
+        s.left_margin = s.right_margin = Cm(2)
+        s.top_margin = s.bottom_margin = Cm(1.8)
+    normal = d.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(11)
+
+    def add_text(par, text, bold=False, size=None, color=None):
+        parts = clean_text(text).split("\n")
+        for idx, part in enumerate(parts):
+            run = par.add_run(part)
+            run.bold = bold
+            if size:
+                run.font.size = Pt(size)
+            if color:
+                run.font.color.rgb = RGBColor.from_string(color)
+            if idx < len(parts) - 1:
+                run.add_break()
+
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(p, meta["institute"].upper(), bold=True, size=17, color="1E3A8A")
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(p, meta["category"], bold=True, size=12, color="334155")
+
+    t = d.add_table(rows=3, cols=4)
+    t.style = "Table Grid"
+    info = [
+        ("Subject / Topic:", meta["topic"], "Time Allowed:", f"{meta['time_min']} Minutes"),
+        ("Exam:", meta["category"], "Total Marks:", str(meta["total_marks"])),
+        ("Student Name:", "", "Roll No:", ""),
+    ]
+    for r, row in enumerate(info):
+        for c, val in enumerate(row):
+            cell = t.cell(r, c)
+            cell.text = ""
+            add_text(cell.paragraphs[0], val, bold=(c % 2 == 0), size=10)
+
+    p = d.add_paragraph()
+    add_text(
+        p,
+        "Instructions: "
+        + "  ".join(f"{i}) {x}" for i, x in enumerate(INSTRUCTIONS, 1)),
+        size=9,
+    )
+
+    for letter, title, marks, kind, items in section_list(data, meta):
+        p = d.add_paragraph()
+        p.paragraph_format.space_before = Pt(10)
+        add_text(
+            p, f"SECTION {letter} — {title}      ({marks})",
+            bold=True, size=12, color="1E3A8A",
+        )
+        for i, it in enumerate(items, 1):
+            p = d.add_paragraph()
+            p.paragraph_format.space_before = Pt(6)
+            p.paragraph_format.space_after = Pt(1)
+            add_text(p, f"Q{i}.  ", bold=True)
+            add_text(p, it["q"])
+            if kind == "mcq":
+                for j, opt in enumerate(it["options"]):
+                    op = d.add_paragraph()
+                    op.paragraph_format.left_indent = Cm(1.2)
+                    op.paragraph_format.space_after = Pt(0)
+                    add_text(op, f"({LETTERS[j]})  {opt}")
+            elif kind == "long":
+                d.add_paragraph()
+
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(14)
+    add_text(p, "— End of Paper —", size=9, color="64748B")
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(
+        p,
+        "Designed by Waheed Ali Hamouzai • WSA Educational Community",
+        size=8,
+        color="64748B",
+    )
+
+    buf = io.BytesIO()
+    d.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# ============================================================
+# SIMPLE TEXT -> PDF (evaluation / diagnostic reports)
 # ============================================================
 
 
 def create_pdf_from_text(title, content):
-    """Converts markdown/text content into a downloadable PDF binary stream with Hadith and author branding.
-
-    NOTE: Default reportlab fonts Urdu/Arabic script render nahi karte.
-    Urdu PDF ke liye Noto Naskh Arabic jaisa TTF font register karna hoga
-    (+ arabic_reshaper aur python-bidi).
-    """
+    """Converts markdown/text content into a downloadable PDF with Hadith and author branding."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
+        pagesize=A4,
         rightMargin=40,
         leftMargin=40,
         topMargin=40,
-        bottomMargin=40,
+        bottomMargin=45,
     )
-
-    styles = getSampleStyleSheet()
-
-    app_meta_style = ParagraphStyle(
-        "AppMetaStyle",
-        parent=styles["Normal"],
-        fontSize=8,
-        textColor=colors.HexColor("#64748B"),
-        alignment=1,
-        spaceAfter=10,
+    S = pdf_styles()
+    body_style = ParagraphStyle(
+        "BodyStyle", parent=S["q"], fontSize=10, leading=14, spaceAfter=6
+    )
+    head_style = ParagraphStyle(
+        "HeadStyle", parent=S["q"], fontName=PDF_FONT_B, fontSize=11.5,
+        leading=15, textColor=NAVY, spaceBefore=8, spaceAfter=4,
     )
     title_style = ParagraphStyle(
-        "TitleStyle",
-        parent=styles["Heading1"],
-        fontSize=18,
-        textColor=colors.HexColor("#1E3A8A"),
-        spaceAfter=15,
-        alignment=1,
-    )
-    body_style = ParagraphStyle(
-        "BodyStyle",
-        parent=styles["Normal"],
-        fontSize=10,
-        leading=14,
-        textColor=colors.HexColor("#1E293B"),
-        spaceAfter=8,
-    )
-    pdf_hadith_style = ParagraphStyle(
-        "PdfHadithStyle",
-        parent=styles["Normal"],
-        fontSize=8.5,
-        leading=12,
-        textColor=colors.HexColor("#334155"),
-        alignment=1,
-        spaceBefore=12,
-        spaceAfter=2,
-    )
-    pdf_hadith_ref = ParagraphStyle(
-        "PdfHadithRef",
-        parent=styles["Normal"],
-        fontSize=7.5,
-        textColor=colors.HexColor("#2563EB"),
-        alignment=1,
-        spaceAfter=10,
-    )
-    footer_style = ParagraphStyle(
-        "FooterStyle",
-        parent=styles["Normal"],
-        fontSize=9,
-        textColor=colors.HexColor("#0F172A"),
-        alignment=1,
-        spaceBefore=5,
+        "TitleStyle", parent=S["inst"], fontSize=18, spaceAfter=12
     )
 
     story = [
-        Paragraph(
-            "<b>Generated via WSA Educational Test Series &amp; Paper Builder"
-            " (AI-Powered)</b>",
-            app_meta_style,
-        ),
-        Spacer(1, 4),
-        Paragraph(html.escape(title), title_style),
-        Spacer(1, 10),
+        rich("Generated via WSA Educational Test Series & Paper Builder (AI-Powered)", S["center"]),
+        Spacer(1, 6),
+        rich(title, title_style),
+        Spacer(1, 6),
     ]
 
     for line in content.split("\n"):
-        clean_line = line.strip()
-        if clean_line:
-            clean_line = html.escape(clean_line)
-
-            # Handle bold markdown (**bold**)
-            while "**" in clean_line:
-                clean_line = clean_line.replace("**", "<b>", 1)
-                if "**" in clean_line:
-                    clean_line = clean_line.replace("**", "</b>", 1)
-                else:
-                    # unmatched ** -> close the tag so reportlab doesn't fail
-                    clean_line += "</b>"
-
-            story.append(Paragraph(clean_line, body_style))
+        line = EMOJI_RE.sub("", line).rstrip()
+        if not line.strip():
+            story.append(Spacer(1, 5))
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#") or (
+            stripped.startswith("**") and stripped.endswith("**") and len(stripped) < 90
+        ):
+            story.append(rich(stripped.lstrip("#").strip(), head_style))
+        elif set(stripped) <= set("-=_ "):
+            continue
         else:
-            story.append(Spacer(1, 6))
+            story.append(rich(stripped, body_style))
 
-    story.append(Spacer(1, 15))
-    story.append(Paragraph("_" * 80, app_meta_style))
+    story += [Spacer(1, 12)] + _brand_footer(S)[2:]
     story.append(
-        Paragraph(
-            '<i>"Whoever travels a path in search of knowledge, Allah will make'
-            ' easy for him a path to Paradise."</i>',
-            pdf_hadith_style,
-        )
+        rich("Designed by Waheed Ali Hamouzai • WSA Educational Community", S["center"])
     )
-    story.append(
-        Paragraph(
-            "— Prophet Muhammad (PBUH) | <b>Sahih Muslim, Book 35, Hadith"
-            " 6518</b>",
-            pdf_hadith_ref,
-        )
-    )
-    story.append(
-        Paragraph(
-            "<b>Designed by Waheed Ali Hamouzai</b> • WSA Educational"
-            " Community",
-            footer_style,
-        )
-    )
-
-    doc.build(story)
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
     buffer.seek(0)
     return buffer
 
@@ -308,6 +997,7 @@ def call_llm(
     prompt_text,
     system_instruction="You are an expert educational examiner.",
     temperature=0.3,
+    json_mode=False,
 ):
     """
     llm_cfg = {
@@ -320,7 +1010,6 @@ def call_llm(
     provider_choice = llm_cfg["provider"]
     custom_model = (llm_cfg.get("custom_model") or "").strip()
 
-    # Which providers to try, in order
     if provider_choice == AUTO_MODE:
         provider_order = [p for p in AUTO_ORDER if keys.get(p)]
     else:
@@ -335,33 +1024,34 @@ def call_llm(
 
     for provider in provider_order:
         cfg = PROVIDERS[provider]
-        client = OpenAI(
-            api_key=keys[provider], base_url=cfg["base_url"], timeout=90
-        )
+        client = OpenAI(api_key=keys[provider], base_url=cfg["base_url"], timeout=90)
 
-        # Custom model sirf tab use hoga jab user ne specific provider select kiya ho
         if custom_model and provider_choice == provider:
             models_to_try = [custom_model]
         else:
             models_to_try = cfg["models"]
 
         for model_name in models_to_try:
-            try:
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": system_instruction},
-                        {"role": "user", "content": prompt_text},
-                    ],
-                    temperature=temperature,
-                )
-                text = response.choices[0].message.content
-                if text and text.strip():
-                    return text
-                errors.append(f"{provider}/{model_name}: empty response")
-            except Exception as e:
-                errors.append(f"{provider}/{model_name}: {str(e)[:160]}")
-                continue
+            messages = [
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": prompt_text},
+            ]
+            attempts = [{"response_format": {"type": "json_object"}}, {}] if json_mode else [{}]
+            for extra in attempts:
+                try:
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=messages,
+                        temperature=temperature,
+                        **extra,
+                    )
+                    text = response.choices[0].message.content
+                    if text and text.strip():
+                        return text
+                    errors.append(f"{provider}/{model_name}: empty response")
+                except Exception as e:
+                    errors.append(f"{provider}/{model_name}: {str(e)[:160]}")
+                    continue
 
     raise Exception("Sab providers fail ho gaye:\n- " + "\n- ".join(errors))
 
@@ -386,51 +1076,78 @@ def generate_test_paper(
 
     if language == "Urdu":
         language_instruction = (
-            "Generate the complete test paper strictly in URDU language."
+            "Write EVERYTHING (questions, options, answers) strictly in URDU language."
         )
     elif language == "Bilingual (English + Urdu)":
         language_instruction = (
-            "Generate the test paper in BILINGUAL format (English followed by Urdu"
-            " translation for each question and option)."
+            "BILINGUAL: every question is written in English, then a new line"
+            " (\\n), then its Urdu translation. Every option is written as"
+            " 'English text / اردو ترجمہ' on ONE line. Answers may be in English."
         )
     else:
-        language_instruction = "Generate the test paper in ENGLISH language."
+        language_instruction = "Write everything in ENGLISH language."
 
-    reference_block = f"REFERENCE TEXT:\n{pdf_text}" if pdf_text else ""
+    reference_block = f"REFERENCE TEXT (base the questions on this):\n{pdf_text}" if pdf_text else ""
 
     prompt = f"""
-Create a professional examination paper.
+Create a professional examination paper as a JSON object.
 
-TARGET TEST CATEGORY: {test_type}
+EXAM CATEGORY / STYLE: {test_type}
 TOPIC / SUBJECT: {topic}
 DIFFICULTY LEVEL: {diff_level}
-LANGUAGE MODE: {language}
-
-LANGUAGE REQUIREMENT:
+LANGUAGE: {language}
 {language_instruction}
 
-QUESTION COUNTS:
-MCQs: {mcq_count}
-SHORT QUESTIONS: {short_count}
-LONG QUESTIONS: {long_count}
+EXACT QUESTION COUNTS:
+- mcqs: {mcq_count}
+- short: {short_count}
+- long: {long_count}
+(If a count is 0, return an empty list for it.)
 
-REQUIREMENTS:
-1. MCQs must have 4 options (A, B, C, D).
-2. Short and Long questions should be clear and well-structured.
-3. Provide a complete ANSWER KEY at the bottom.
+QUALITY RULES:
+1. Every MCQ has EXACTLY 4 options in the "options" list, WITHOUT letter prefixes
+   (write "Paris", NOT "A) Paris"). The "answer" is only the letter: "A", "B", "C" or "D".
+2. Only ONE option is correct; the other three must be plausible distractors.
+   Avoid overusing "All of the above" / "None of the above".
+3. Spread the correct answers evenly across A, B, C and D (do not favour one letter).
+4. No repeated or near-duplicate questions. Cover different sub-topics.
+5. Order questions from easier to harder within each section.
+6. Short questions need a 2-3 line answer; long questions are descriptive and may
+   have parts (a), (b), (c) on separate lines. Give a model answer / key points for each.
+7. Do not use markdown (no ** or #) inside any text.
+
+Return ONLY a valid JSON object in exactly this structure, with no extra text:
+{JSON_SCHEMA_TEXT}
 
 {reference_block}
 """
 
-    return call_llm(
-        llm_cfg,
-        prompt_text=prompt,
-        system_instruction=(
-            "You are an expert examiner for educational boards and competitive"
-            " testing services capable of generating test papers in English,"
-            " Urdu, and Bilingual formats."
-        ),
-        temperature=0.3,
+    system = (
+        "You are a senior paper-setter for educational boards and competitive"
+        " testing services (NTS, PPSC, FPSC, school boards). You output ONLY"
+        " valid JSON, never prose."
+    )
+
+    last_error = None
+    for attempt in range(2):
+        raw = call_llm(
+            llm_cfg,
+            prompt_text=prompt if attempt == 0 else prompt + "\nIMPORTANT: your previous reply was not valid JSON. Reply with JSON ONLY.",
+            system_instruction=system,
+            temperature=0.3,
+            json_mode=True,
+        )
+        try:
+            data = parse_paper_json(raw, mcq_count, short_count, long_count)
+            if data["mcqs"] or data["short"] or data["long"]:
+                return data
+            last_error = "AI ne koi question nahi diya."
+        except Exception as e:
+            last_error = str(e)
+
+    raise Exception(
+        f"AI ne paper sahi format mai nahi diya ({last_error}). Dobara Generate dabao"
+        " ya sidebar mai koi aur provider select karo."
     )
 
 
@@ -494,6 +1211,15 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
         ),
         temperature=0.3,
     )
+
+
+def safe_download_data(builder, *args, **kwargs):
+    """PDF/Word banane mai koi masla aaye toh poori app crash na ho."""
+    try:
+        return builder(*args, **kwargs)
+    except Exception as e:
+        st.warning(f"File banane mai masla aaya: {e}")
+        return None
 
 
 # ============================================================
@@ -631,6 +1357,18 @@ with tab1:
         short_count = st.number_input("Number of Short Questions", 0, 20, 5)
         long_count = st.number_input("Number of Long Questions", 0, 10, 2)
 
+    with st.expander("🏫 Paper Header, Marks & Time (optional)"):
+        h1, h2 = st.columns(2)
+        with h1:
+            institute = st.text_input(
+                "Institute / Academy Name", value="WSA Educational Community"
+            )
+            time_min = st.number_input("Time Allowed (minutes)", 5, 300, 60, step=5)
+        with h2:
+            mcq_marks = st.number_input("Marks per MCQ", 1, 10, 1)
+            short_marks = st.number_input("Marks per Short Question", 1, 20, 2)
+            long_marks = st.number_input("Marks per Long Question", 1, 50, 5)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     if st.button("🚀 Generate Test Paper", use_container_width=True):
@@ -638,10 +1376,12 @@ with tab1:
             st.error(NO_KEY_MSG)
         elif not topic.strip():
             st.error("⚠️ Please enter a topic or subject name.")
+        elif mcq_count + short_count + long_count == 0:
+            st.error("⚠️ Kam az kam ek question chahiye.")
         else:
-            with st.spinner("Generating test paper via AI... Please wait."):
+            with st.spinner("Generating professional test paper via AI... Please wait."):
                 try:
-                    res = generate_test_paper(
+                    paper = generate_test_paper(
                         llm_cfg,
                         topic,
                         uploaded_pdf,
@@ -652,34 +1392,92 @@ with tab1:
                         long_count,
                         diff_level,
                     )
-                    st.session_state["generated_paper"] = res
+                    meta = {
+                        "institute": institute.strip() or "WSA Educational Community",
+                        "category": test_type,
+                        "topic": topic.strip(),
+                        "language": language,
+                        "time_min": int(time_min),
+                        "mcq_marks": int(mcq_marks),
+                        "short_marks": int(short_marks),
+                        "long_marks": int(long_marks),
+                    }
+                    meta["total_marks"] = compute_total_marks(paper, meta)
+
+                    st.session_state["paper_data"] = paper
+                    st.session_state["paper_meta"] = meta
+                    st.session_state["generated_paper"] = paper_to_text(
+                        paper, meta, include_key=True
+                    )
+
+                    got = (len(paper["mcqs"]), len(paper["short"]), len(paper["long"]))
+                    want = (mcq_count, short_count, long_count)
+                    if got != want:
+                        st.warning(
+                            f"AI ne MCQ/Short/Long = {got} diye, aap ne {want} maange thay."
+                            " Zaroorat ho toh dobara Generate karo."
+                        )
                 except Exception as e:
                     st.error(f"❌ Error occurred: {e}")
 
-    if "generated_paper" in st.session_state:
+    if "paper_data" in st.session_state:
+        paper = st.session_state["paper_data"]
+        meta = st.session_state["paper_meta"]
+
         st.divider()
         st.subheader("📄 Generated Test Paper")
-        st.markdown(st.session_state["generated_paper"])
+        st.markdown(paper_to_markdown(paper, meta))
 
-        c1, c2 = st.columns(2)
-        with c1:
+        with st.expander("🔑 Answer Key (Teacher Copy)"):
+            st.markdown(answer_key_markdown(paper, meta))
+
+        d1, d2 = st.columns(2)
+        d3, d4 = st.columns(2)
+
+        paper_pdf = safe_download_data(build_paper_pdf, paper, meta, "paper")
+        key_pdf = safe_download_data(build_paper_pdf, paper, meta, "key")
+        word_file = safe_download_data(build_paper_docx, paper, meta)
+
+        with d1:
+            if paper_pdf:
+                st.download_button(
+                    "⬇️ Question Paper (PDF)",
+                    data=paper_pdf,
+                    file_name="WSA_Question_Paper.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        with d2:
+            if key_pdf:
+                st.download_button(
+                    "🔑 Answer Key (PDF)",
+                    data=key_pdf,
+                    file_name="WSA_Answer_Key.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        with d3:
+            if word_file:
+                st.download_button(
+                    "📝 Question Paper (Word)",
+                    data=word_file,
+                    file_name="WSA_Question_Paper.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
+        with d4:
             st.download_button(
-                "⬇️ Download Text (.txt)",
+                "⬇️ Paper + Key (Text)",
                 data=st.session_state["generated_paper"],
                 file_name="WSA_Test_Paper.txt",
                 mime="text/plain",
                 use_container_width=True,
             )
-        with c2:
-            pdf_bytes = create_pdf_from_text(
-                "WSA Examination Paper", st.session_state["generated_paper"]
-            )
-            st.download_button(
-                "⬇️ Download PDF (.pdf)",
-                data=pdf_bytes,
-                file_name="WSA_Test_Paper.pdf",
-                mime="application/pdf",
-                use_container_width=True,
+
+        if meta["language"] != "English" and not RTL_OK:
+            st.info(
+                "Urdu PDF ke liye: `pip install arabic-reshaper python-bidi` chalao."
+                " Word (.docx) file mai Urdu hamesha theek aata hai."
             )
 
 
@@ -739,9 +1537,7 @@ with tab2:
                     " text."
                 )
             else:
-                with st.spinner(
-                    "Evaluating student answers via AI... Please wait."
-                ):
+                with st.spinner("Evaluating student answers via AI... Please wait."):
                     try:
                         eval_res = evaluate_student_answers(
                             llm_cfg, final_p_text, final_a_text
@@ -765,16 +1561,19 @@ with tab2:
                 use_container_width=True,
             )
         with col_d2:
-            eval_pdf = create_pdf_from_text(
-                "Student Evaluation Report", st.session_state["evaluation"]
+            eval_pdf = safe_download_data(
+                create_pdf_from_text,
+                "Student Evaluation Report",
+                st.session_state["evaluation"],
             )
-            st.download_button(
-                "⬇️ Download PDF Report (.pdf)",
-                data=eval_pdf,
-                file_name="WSA_Student_Evaluation.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+            if eval_pdf:
+                st.download_button(
+                    "⬇️ Download PDF Report (.pdf)",
+                    data=eval_pdf,
+                    file_name="WSA_Student_Evaluation.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
 
 
 # ============================================================
@@ -857,17 +1656,19 @@ with tab3:
                 use_container_width=True,
             )
         with col_rd2:
-            diag_pdf = create_pdf_from_text(
+            diag_pdf = safe_download_data(
+                create_pdf_from_text,
                 "Test Diagnostic & Improvement Plan",
                 st.session_state["diagnostic_analysis"],
             )
-            st.download_button(
-                "⬇️ Download PDF Diagnostic (.pdf)",
-                data=diag_pdf,
-                file_name="WSA_Test_Diagnostic.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+            if diag_pdf:
+                st.download_button(
+                    "⬇️ Download PDF Diagnostic (.pdf)",
+                    data=diag_pdf,
+                    file_name="WSA_Test_Diagnostic.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
 
 
 # ============================================================
