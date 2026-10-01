@@ -1,8 +1,12 @@
+import base64
 import html
 import io
 import json
 import os
 import re
+import threading
+import time
+from datetime import date
 
 import docx
 import pypdf
@@ -55,40 +59,157 @@ st.set_page_config(
 # LLM PROVIDERS CONFIG (all use OpenAI-compatible endpoints)
 # ------------------------------------------------------------
 # Model names / free limits change often. Agar koi model "not found"
-# de, toh sidebar ke "Custom Model ID" mai naya model ka naam likh do.
+# de, toh secrets mai GROQ_MODEL = "naya-model-id" likh do.
 #   Groq:        https://console.groq.com/keys
 #   Gemini:      https://aistudio.google.com/apikey
-#   OpenRouter:  https://openrouter.ai/keys
 # ============================================================
 
 PROVIDERS = {
     "Groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "env": "GROQ_API_KEY",
-        "models": ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"],
+        "models": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
+        # Photo se text nikalne ke liye (Groq ke vision models preview mai hain)
+        "vision_models": ["qwen/qwen3.8-27b"],
     },
     "Gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "env": "GEMINI_API_KEY",
-        "models": ["gemini-3.5-flash", "gemini-3.5-flash-lite"],
-    },
-    "OpenRouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "env": "OPENROUTER_API_KEY",
-        "models": [
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "nvidia/nemotron-3-ultra-550b-a55b:free",
-        ],
+        # "-latest" alias hamesha Google ke current Flash model par rehta hai,
+        # is liye purane model band hone par app nahi tootti.
+        "models": ["gemini-flash-latest", "gemini-3.1-flash-lite"],
+        "vision_models": ["gemini-flash-latest", "gemini-3.1-flash-lite"],
     },
 }
 
 AUTO_MODE = "Auto (Fallback)"
-AUTO_ORDER = ["Groq", "Gemini", "OpenRouter"]
+AUTO_ORDER = ["Groq", "Gemini"]
 
 # Free tiers ki token limits chhoti hoti hain, isliye reference text cap
 MAX_REFERENCE_CHARS = 9000
 
 LETTERS = "ABCD"
+
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+UPLOAD_TYPES = ["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp"]
+UPLOAD_HINT = "PDF, DOCX, TXT, JPG, PNG"
+
+
+def is_image(uploaded_file):
+    return uploaded_file is not None and uploaded_file.name.lower().endswith(IMAGE_EXTS)
+
+
+def prepare_image_b64(uploaded_file, max_side=1800):
+    """Photo ko chhota (compress) karke base64 mai badalta hai (API limit ke andar rehne ke liye)."""
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(uploaded_file.getvalue()))
+    img = ImageOps.exif_transpose(img)  # mobile photo ka ulta / lait hona theek karta hai
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+# ============================================================
+# SECRETS + SHARED-QUOTA PROTECTION
+# ------------------------------------------------------------
+# API key user ko kabhi nahi dikhti: wo server ke "secrets" mai rehti hai.
+#   - Streamlit Cloud: App settings -> Secrets
+#   - Local computer : .streamlit/secrets.toml  ya  .env file
+# ============================================================
+
+
+def get_secret(name, default=""):
+    try:
+        val = st.secrets.get(name)
+        if val:
+            return str(val).strip()
+    except Exception:
+        pass
+    return os.getenv(name, default).strip()
+
+
+# Optional: model retire ho jaye toh secrets mai GROQ_MODEL likh do (code na badalna pade)
+_groq_model_override = get_secret("GROQ_MODEL")
+if _groq_model_override:
+    PROVIDERS["Groq"]["models"].insert(0, _groq_model_override)
+
+_groq_vision_override = get_secret("GROQ_VISION_MODEL")
+if _groq_vision_override:
+    PROVIDERS["Groq"]["vision_models"].insert(0, _groq_vision_override)
+
+_gemini_override = get_secret("GEMINI_MODEL")
+if _gemini_override:
+    PROVIDERS["Gemini"]["models"].insert(0, _gemini_override)
+    PROVIDERS["Gemini"]["vision_models"].insert(0, _gemini_override)
+
+SESSION_COOLDOWN_SEC = 15  # ek user do requests ke beech kam az kam itna gap
+SESSION_MAX_CALLS = 20  # ek browser session mai zyada se zyada AI requests
+try:
+    DAILY_LIMIT = int(get_secret("DAILY_LIMIT") or 400)  # sab users ki mila kar roz ki hadd
+except ValueError:
+    DAILY_LIMIT = 400
+
+
+@st.cache_resource
+def usage_store():
+    """Sab users ke darmiyan shared counter (server chalta rahe tak)."""
+    return {"day": date.today().isoformat(), "count": 0, "lock": threading.Lock()}
+
+
+def allow_ai_call(using_own_key, units=1):
+    """Shared free key ko bachane ke liye limits. Apni key wale users par koi limit nahi."""
+    if using_own_key:
+        return True
+
+    ss = st.session_state
+    now = time.time()
+    wait = SESSION_COOLDOWN_SEC - (now - ss.get("_last_ai_call", 0))
+    if wait > 0:
+        st.warning(f"⏳ Thora sabr karo, {int(wait) + 1} second baad dobara try karo.")
+        return False
+    if ss.get("_ai_calls", 0) + units > SESSION_MAX_CALLS:
+        st.error(
+            "Is session ki free limit khatam ho gayi. Page refresh karo ya sidebar"
+            " mai apni free Groq key dalo."
+        )
+        return False
+
+    store = usage_store()
+    with store["lock"]:
+        today = date.today().isoformat()
+        if store["day"] != today:
+            store["day"], store["count"] = today, 0
+        if store["count"] + units > DAILY_LIMIT:
+            st.error(
+                "Aaj ki shared free limit khatam ho gayi. Kal dobara aana, ya sidebar"
+                " mai apni free Groq key (console.groq.com/keys) dal kar chalao."
+            )
+            return False
+        store["count"] += units
+
+    ss["_last_ai_call"] = now
+    ss["_ai_calls"] = ss.get("_ai_calls", 0) + units
+    return True
+
+
+def show_error(e):
+    msg = str(e)
+    low = msg.lower()
+    if "429" in msg or "rate limit" in low or "quota" in low:
+        st.error(
+            "⏳ Free AI server abhi busy hai (limit lag gayi). 1-2 minute ruk kar"
+            " dobara try karo, ya sidebar mai apni free Groq key dalo."
+        )
+    elif "401" in msg or "api key" in low or "authentication" in low:
+        st.error("🔑 API key ka masla hai. Key dobara check karo.")
+    else:
+        st.error("❌ Error occurred. Dobara try karo.")
+    with st.expander("Technical details"):
+        st.code(msg)
 
 
 # ============================================================
@@ -988,7 +1109,7 @@ def process_uploaded_file(uploaded_file):
 
 
 # ============================================================
-# UNIVERSAL LLM CALL (Groq / Gemini / OpenRouter) WITH FALLBACK
+# UNIVERSAL LLM CALL (Groq / Gemini) WITH FALLBACK
 # ============================================================
 
 
@@ -998,11 +1119,13 @@ def call_llm(
     system_instruction="You are an expert educational examiner.",
     temperature=0.3,
     json_mode=False,
+    image_b64=None,
 ):
     """
+    image_b64: agar diya ho toh vision model se image padhwati hai.
     llm_cfg = {
-        "keys": {"Groq": "...", "Gemini": "...", "OpenRouter": "..."},
-        "provider": "Auto (Fallback)" | "Groq" | "Gemini" | "OpenRouter",
+        "keys": {"Groq": "...", "Gemini": "..."},
+        "provider": "Auto (Fallback)" | "Groq" | "Gemini",
         "custom_model": "" (optional),
     }
     """
@@ -1015,9 +1138,15 @@ def call_llm(
     else:
         provider_order = [provider_choice] if keys.get(provider_choice) else []
 
+    if image_b64:
+        # sirf wo providers jinke paas vision model hai
+        provider_order = [p for p in provider_order if PROVIDERS[p]["vision_models"]]
+
     if not provider_order:
         raise Exception(
-            "Koi API key nahi mili. Sidebar mai kam az kam ek provider ki key dalo."
+            "Koi API key nahi mili"
+            + (" jo photo (vision) padh sake. Groq ya Gemini key chahiye." if image_b64 else ".")
+            + " Sidebar mai apni Groq key dalo."
         )
 
     errors = []
@@ -1026,17 +1155,35 @@ def call_llm(
         cfg = PROVIDERS[provider]
         client = OpenAI(api_key=keys[provider], base_url=cfg["base_url"], timeout=90)
 
-        if custom_model and provider_choice == provider:
+        if image_b64:
+            models_to_try = cfg["vision_models"]
+        elif custom_model and provider_choice == provider:
             models_to_try = [custom_model]
         else:
             models_to_try = cfg["models"]
 
         for model_name in models_to_try:
-            messages = [
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": prompt_text},
-            ]
-            attempts = [{"response_format": {"type": "json_object"}}, {}] if json_mode else [{}]
+            if image_b64:
+                # vision models ke liye instruction user message ke andar hi rakhte hain
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": system_instruction + "\n\n" + prompt_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                            },
+                        ],
+                    }
+                ]
+            else:
+                messages = [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt_text},
+                ]
+            use_json = json_mode and not image_b64
+            attempts = [{"response_format": {"type": "json_object"}}, {}] if use_json else [{}]
             for extra in attempts:
                 try:
                     response = client.chat.completions.create(
@@ -1045,15 +1192,60 @@ def call_llm(
                         temperature=temperature,
                         **extra,
                     )
-                    text = response.choices[0].message.content
-                    if text and text.strip():
+                    text = response.choices[0].message.content or ""
+                    # kuch reasoning models <think>...</think> bhi bhej dete hain
+                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+                    if text:
                         return text
                     errors.append(f"{provider}/{model_name}: empty response")
                 except Exception as e:
-                    errors.append(f"{provider}/{model_name}: {str(e)[:160]}")
+                    err = str(e)
+                    if keys.get(provider):
+                        err = err.replace(keys[provider], "***")
+                    errors.append(f"{provider}/{model_name}: {err[:160]}")
                     continue
 
     raise Exception("Sab providers fail ho gaye:\n- " + "\n- ".join(errors))
+
+
+# ============================================================
+# IMAGE (PHOTO / SCAN) -> TEXT
+# ============================================================
+
+
+def extract_text_from_image(llm_cfg, uploaded_file):
+    """Photo (paper, answer sheet, result card) se text nikalta hai. Urdu + English."""
+    image_b64 = prepare_image_b64(uploaded_file)
+    text = call_llm(
+        llm_cfg,
+        prompt_text=(
+            "Transcribe ALL text visible in this image exactly as written (English"
+            " and Urdu, printed or handwritten). Keep question numbers, options,"
+            " marks, ticks/circled answers and the original line order. Do not"
+            " explain, summarise or add anything. If nothing readable is present,"
+            " reply with exactly: UNREADABLE"
+        ),
+        system_instruction="You are a precise OCR engine for exam papers and answer sheets.",
+        temperature=0.0,
+        image_b64=image_b64,
+    )
+    if "UNREADABLE" in text.upper() and len(text) < 40:
+        raise Exception(
+            "Photo se text nahi nikal saka. Saaf, roshan aur seedhi tasveer upload karo."
+        )
+    return text
+
+
+def read_upload(uploaded_file, llm_cfg):
+    """PDF/DOCX/TXT seedha padhta hai, photo ho toh AI (vision) se text nikalta hai."""
+    if is_image(uploaded_file):
+        return extract_text_from_image(llm_cfg, uploaded_file)
+    return process_uploaded_file(uploaded_file)
+
+
+def preview_if_image(uploaded_file):
+    if is_image(uploaded_file):
+        st.image(uploaded_file, width=260)
 
 
 # ============================================================
@@ -1072,7 +1264,7 @@ def generate_test_paper(
     long_count,
     diff_level,
 ):
-    pdf_text = process_uploaded_file(uploaded_pdf)
+    pdf_text = read_upload(uploaded_pdf, llm_cfg)[:MAX_REFERENCE_CHARS]
 
     if language == "Urdu":
         language_instruction = (
@@ -1229,38 +1421,29 @@ def safe_download_data(builder, *args, **kwargs):
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    provider_choice = st.selectbox(
-        "🤖 AI Provider",
-        [AUTO_MODE] + list(PROVIDERS.keys()),
-        help=(
-            "Auto mode mai jis provider ki key di hogi, wo order se try honge:"
-            " Groq → Gemini → OpenRouter. Ek fail ho toh agla chalega."
-        ),
-    )
+    server_keys = {name: get_secret(cfg["env"]) for name, cfg in PROVIDERS.items()}
+    server_ready = any(server_keys.values())
 
-    st.caption("Kam az kam ek key dalo (teeno free mil jati hain):")
-    keys = {}
-    for provider_name, cfg in PROVIDERS.items():
-        keys[provider_name] = st.text_input(
-            f"{provider_name} API Key",
-            value=os.getenv(cfg["env"], ""),
+    if server_ready:
+        st.success("✅ AI tayyar hai. Koi API key dalne ki zaroorat nahi.")
+    else:
+        st.warning("Server par API key set nahi hai. Neeche apni Groq key dalo.")
+
+    with st.expander("🔑 Apni Groq key use karo (optional)", expanded=not server_ready):
+        own_key = st.text_input(
+            "Groq API Key",
             type="password",
-            key=f"key_{provider_name}",
+            help="Free key: console.groq.com/keys. Apni key par koi limit nahi lagti.",
         ).strip()
 
-    custom_model = ""
-    if provider_choice != AUTO_MODE:
-        custom_model = st.text_input(
-            "Custom Model ID (optional)",
-            placeholder=PROVIDERS[provider_choice]["models"][0],
-            help="Agar default model kaam na kare toh yahan naya model ID likho.",
-        )
+    using_own_key = bool(own_key)
+    if using_own_key:
+        keys = {name: "" for name in PROVIDERS}
+        keys["Groq"] = own_key
+    else:
+        keys = server_keys
 
-    llm_cfg = {
-        "keys": keys,
-        "provider": provider_choice,
-        "custom_model": custom_model,
-    }
+    llm_cfg = {"keys": keys, "provider": AUTO_MODE, "custom_model": ""}
     has_any_key = any(keys.values())
 
     st.markdown("---")
@@ -1293,7 +1476,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-NO_KEY_MSG = "⚠️ Please enter at least one API key (Groq / Gemini / OpenRouter) in the sidebar."
+NO_KEY_MSG = "⚠️ AI key set nahi hai. Sidebar mai apni Groq key dalo."
 
 st.markdown(
     """<div class="hero-container">
@@ -1351,8 +1534,10 @@ with tab1:
 
     with col2:
         uploaded_pdf = st.file_uploader(
-            "Upload Reference Document (Optional)", type=["pdf", "docx", "txt"]
+            f"Upload Reference Document or Photo (Optional) — {UPLOAD_HINT}",
+            type=UPLOAD_TYPES,
         )
+        preview_if_image(uploaded_pdf)
         mcq_count = st.number_input("Number of MCQs", 0, 50, 10)
         short_count = st.number_input("Number of Short Questions", 0, 20, 5)
         long_count = st.number_input("Number of Long Questions", 0, 10, 2)
@@ -1378,6 +1563,8 @@ with tab1:
             st.error("⚠️ Please enter a topic or subject name.")
         elif mcq_count + short_count + long_count == 0:
             st.error("⚠️ Kam az kam ek question chahiye.")
+        elif not allow_ai_call(using_own_key, units=1 + int(is_image(uploaded_pdf))):
+            pass  # limit message allow_ai_call ne dikha diya
         else:
             with st.spinner("Generating professional test paper via AI... Please wait."):
                 try:
@@ -1418,7 +1605,7 @@ with tab1:
                             " Zaroorat ho toh dobara Generate karo."
                         )
                 except Exception as e:
-                    st.error(f"❌ Error occurred: {e}")
+                    show_error(e)
 
     if "paper_data" in st.session_state:
         paper = st.session_state["paper_data"]
@@ -1494,10 +1681,11 @@ with tab2:
     with col_paper:
         st.markdown("### 1️⃣ Question Paper / Answer Key")
         paper_file = st.file_uploader(
-            "Upload Paper (PDF, DOCX, TXT)",
-            type=["pdf", "docx", "txt"],
+            f"Upload Paper ({UPLOAD_HINT})",
+            type=UPLOAD_TYPES,
             key="p_up",
         )
+        preview_if_image(paper_file)
         question_paper_text = st.text_area(
             "Or Paste Text Directly",
             value=default_paper,
@@ -1508,10 +1696,11 @@ with tab2:
     with col_answer:
         st.markdown("### 2️⃣ Student Answer Sheet")
         student_file = st.file_uploader(
-            "Upload Answers (PDF, DOCX, TXT)",
-            type=["pdf", "docx", "txt"],
+            f"Upload Answers ({UPLOAD_HINT})",
+            type=UPLOAD_TYPES,
             key="s_up",
         )
+        preview_if_image(student_file)
         student_answers_text = st.text_area(
             "Or Paste Text Directly", height=200, key="s_answers_text"
         )
@@ -1520,31 +1709,37 @@ with tab2:
         if not has_any_key:
             st.error(NO_KEY_MSG)
         else:
-            p_text = process_uploaded_file(paper_file)
-            final_p_text = p_text or question_paper_text.strip()
-
+            p_text = process_uploaded_file(paper_file)  # photo ho toh abhi khali
             a_text = process_uploaded_file(student_file)
-            final_a_text = a_text or student_answers_text.strip()
+            paper_pasted = question_paper_text.strip()
+            answers_pasted = student_answers_text.strip()
+            n_images = int(is_image(paper_file)) + int(is_image(student_file))
 
-            if not final_p_text:
+            if not (p_text or paper_pasted or is_image(paper_file)):
                 st.error(
                     "⚠️ Question paper content is missing. Please upload or paste"
                     " text."
                 )
-            elif not final_a_text:
+            elif not (a_text or answers_pasted or is_image(student_file)):
                 st.error(
                     "⚠️ Student answer content is missing. Please upload or paste"
                     " text."
                 )
+            elif not allow_ai_call(using_own_key, units=1 + n_images):
+                pass  # limit message allow_ai_call ne dikha diya
             else:
                 with st.spinner("Evaluating student answers via AI... Please wait."):
                     try:
+                        if is_image(paper_file):
+                            p_text = read_upload(paper_file, llm_cfg)
+                        if is_image(student_file):
+                            a_text = read_upload(student_file, llm_cfg)
                         eval_res = evaluate_student_answers(
-                            llm_cfg, final_p_text, final_a_text
+                            llm_cfg, p_text or paper_pasted, a_text or answers_pasted
                         )
                         st.session_state["evaluation"] = eval_res
                     except Exception as e:
-                        st.error(f"❌ Error occurred: {e}")
+                        show_error(e)
 
     if "evaluation" in st.session_state:
         st.divider()
@@ -1593,10 +1788,11 @@ with tab3:
     with col_diag1:
         st.markdown("### 📄 Test File / Raw Data")
         random_test_file = st.file_uploader(
-            "Upload Test or Result Document (PDF, DOCX, TXT)",
-            type=["pdf", "docx", "txt"],
+            f"Upload Test or Result Document ({UPLOAD_HINT})",
+            type=UPLOAD_TYPES,
             key="random_test_up",
         )
+        preview_if_image(random_test_file)
         random_test_text = st.text_area(
             "Or Paste Raw Test Content / Scores Directly",
             height=200,
@@ -1623,23 +1819,30 @@ with tab3:
         if not has_any_key:
             st.error(NO_KEY_MSG)
         else:
-            extracted_test = process_uploaded_file(random_test_file)
-            final_test_content = extracted_test or random_test_text.strip()
+            extracted_test = process_uploaded_file(random_test_file)  # photo ho toh abhi khali
+            pasted_test = random_test_text.strip()
 
-            if not final_test_content:
-                st.error("⚠️ Please upload a test file or paste text to analyze.")
+            if not (extracted_test or pasted_test or is_image(random_test_file)):
+                st.error(
+                    "⚠️ Please upload a test file (PDF, DOCX, TXT, photo) or paste"
+                    " text to analyze."
+                )
+            elif not allow_ai_call(using_own_key, units=1 + int(is_image(random_test_file))):
+                pass  # limit message allow_ai_call ne dikha diya
             else:
                 with st.spinner(
                     "Analyzing test data and designing personalized improvement"
                     " plan..."
                 ):
                     try:
+                        if is_image(random_test_file):
+                            extracted_test = read_upload(random_test_file, llm_cfg)
                         diag_res = analyze_random_test(
-                            llm_cfg, final_test_content, user_context
+                            llm_cfg, extracted_test or pasted_test, user_context
                         )
                         st.session_state["diagnostic_analysis"] = diag_res
                     except Exception as e:
-                        st.error(f"❌ Error occurred: {e}")
+                        show_error(e)
 
     if "diagnostic_analysis" in st.session_state:
         st.divider()
