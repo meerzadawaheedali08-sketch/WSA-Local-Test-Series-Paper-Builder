@@ -361,9 +361,81 @@ st.markdown(
         .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; letter-spacing: 0.2px; }
         .branding-tag { font-size: 0.82rem; color: #94A3B8; letter-spacing: 0.6px; text-transform: uppercase; }
 
+        /* Mobile-first refinements: retain the existing Streamlit features */
         @media (max-width: 640px) {
-            .hero { padding: 22px 20px; }
-            .hero-title { font-size: 1.6rem; }
+            .block-container {
+                padding: 0.65rem 0.75rem 1.5rem;
+                max-width: 100%;
+            }
+            .hero {
+                padding: 18px 16px;
+                border-radius: 15px;
+                margin-bottom: 14px;
+                box-shadow: 0 7px 18px -9px rgba(30, 58, 138, 0.45);
+            }
+            .hero-label { font-size: 0.68rem; letter-spacing: 0.7px; }
+            .hero-title { font-size: 1.42rem; line-height: 1.18; margin: 7px 0; }
+            .hero-subtitle { font-size: 0.9rem; line-height: 1.5; margin-bottom: 10px; }
+            .chip { font-size: 0.72rem; padding: 5px 9px; margin: 0 4px 5px 0; }
+
+            /* Tabs stay in one horizontally scrollable row instead of being clipped. */
+            .stTabs [data-baseweb="tab-list"] {
+                display: flex;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                gap: 4px;
+                padding: 4px;
+                scrollbar-width: thin;
+                -webkit-overflow-scrolling: touch;
+            }
+            .stTabs [data-baseweb="tab"] {
+                flex: 0 0 auto;
+                min-width: max-content;
+                height: 42px;
+                padding: 0 12px;
+                font-size: 0.82rem;
+                white-space: nowrap;
+            }
+
+            /* Streamlit columns stack on narrow screens; keep controls touch-friendly. */
+            [data-testid="stHorizontalBlock"] {
+                flex-wrap: wrap !important;
+                gap: 0.45rem !important;
+            }
+            [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+                flex: 1 1 100% !important;
+                min-width: 100% !important;
+                width: 100% !important;
+            }
+            [data-testid="stVerticalBlock"] { gap: 0.65rem; }
+            div[class*="st-key-card"] {
+                border-radius: 13px;
+                padding: 0.8rem !important;
+                box-shadow: 0 2px 10px rgba(15, 23, 42, 0.035);
+            }
+            .section-title { font-size: 1rem; }
+            .section-hint { font-size: 0.82rem; line-height: 1.45; }
+
+            input, textarea, [data-baseweb="select"] { font-size: 16px !important; }
+            [data-testid="stFileUploaderDropzone"] { padding: 0.7rem; }
+            .stButton > button, .stDownloadButton > button {
+                min-height: 46px;
+                width: 100%;
+                border-radius: 11px;
+                white-space: normal;
+                line-height: 1.25;
+            }
+            [data-testid="stMetric"] { padding: 10px; }
+            .branding-card { padding: 20px 14px; margin-top: 24px; }
+            .hadith-quote { font-size: 0.9rem; }
+            .hadith-ref, .branding-tag { font-size: 0.7rem; line-height: 1.45; }
+        }
+
+        @media (max-width: 380px) {
+            .block-container { padding-left: 0.55rem; padding-right: 0.55rem; }
+            .hero-title { font-size: 1.28rem; }
+            .hero { padding: 16px 13px; }
+            .stTabs [data-baseweb="tab"] { padding: 0 9px; font-size: 0.76rem; }
         }
     </style>
     """,
