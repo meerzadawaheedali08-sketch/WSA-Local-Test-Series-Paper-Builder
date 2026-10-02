@@ -1,21 +1,22 @@
 {
+  "id": "wsa-paper-builder",
+  "name": "WSA Test Series & Paper Builder",
   "short_name": "WSA Paper Builder",
-  "name": "WSA Test Series &amp; Paper Builder",
+  "description": "Create exam papers for any class or competitive test, check answer sheets, and test preparation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e53c5",
+  "orientation": "portrait",
+  "lang": "en",
+  "dir": "ltr",
   "icons": [
     {
-      "src": "favicon_512.png",
+      "src": "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "sizes": "512x512"
+      "purpose": "any maskable"
     }
-  ],
-  "start_url": "/",
-  "display": "standalone",
-  "theme_color": "#ffffff",
-  "background_color": "#ffffff",
-  "id": "wsa-paper-builder",
-  "description": "Create exam papers for any class or competitive test, check answer sheets, and test preparation.",
-  "dir": "ltr",
-  "scope": "/",
-  "lang": "en",
-  "orientation": "portrait"
+  ]
 }
