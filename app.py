@@ -370,6 +370,63 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Responsive visual refinement only: preserves the existing app flow and features.
+st.markdown(
+    """
+    <style>
+      /* Global polish */
+      .block-container { width: 100%; max-width: 1240px; padding-left: clamp(12px, 3vw, 34px); padding-right: clamp(12px, 3vw, 34px); }
+      [data-testid="stVerticalBlock"] > [data-testid="stHorizontalBlock"] { gap: clamp(12px, 2vw, 24px); }
+      [data-testid="stVerticalBlockBorderWrapper"] { border-color: #DCE5F3; border-radius: 18px; box-shadow: 0 8px 28px rgba(30,58,138,.055); background: rgba(255,255,255,.92); }
+      .hero { padding: clamp(22px, 4vw, 38px); border-radius: 22px; }
+      .hero-title { letter-spacing: -0.045em; }
+      .section-title { font-size: 1.08rem; letter-spacing: -.015em; }
+      [data-testid="stMarkdownContainer"] p { line-height: 1.65; }
+      [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea,
+      [data-testid="stSelectbox"] [role="combobox"], [data-testid="stNumberInput"] input {
+        border-radius: 12px !important; min-height: 44px;
+      }
+      .stButton > button, .stDownloadButton > button { min-height: 46px; white-space: normal; line-height: 1.25; }
+      [data-testid="stFileUploaderDropzone"] { padding: 18px 12px; }
+      .stTabs [data-baseweb="tab-list"] { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+      .stTabs [data-baseweb="tab"] { flex: 0 0 auto; }
+      .branding-card { border-radius: 20px; }
+
+      /* Tablet and phone */
+      @media (max-width: 760px) {
+        .block-container { padding-top: .65rem; padding-bottom: 1.2rem; }
+        .hero { padding: 22px 18px; margin-bottom: 15px; border-radius: 17px; }
+        .hero-label { font-size: .72rem; letter-spacing: .08em; }
+        .hero-title { font-size: clamp(1.45rem, 6vw, 1.9rem); line-height: 1.16; }
+        .hero-subtitle { font-size: .91rem; line-height: 1.55; }
+        .chip { font-size: .73rem; padding: 5px 9px; margin-right: 4px; }
+        [data-testid="stVerticalBlockBorderWrapper"] { border-radius: 14px; }
+        .stTabs [data-baseweb="tab-list"] { gap: 4px; padding: 4px; border-radius: 12px; }
+        .stTabs [data-baseweb="tab"] { height: 42px; padding: 0 13px; font-size: .84rem; }
+        [data-testid="stMetric"] { padding: 10px 11px; }
+        [data-testid="stMetricLabel"] { font-size: .76rem; }
+        [data-testid="stMetricValue"] { font-size: 1.25rem; }
+        .section-title { font-size: 1rem; }
+        .section-hint { font-size: .82rem; line-height: 1.5; }
+        [data-testid="stFileUploaderDropzone"] { padding: 12px 8px; }
+        [data-testid="stFileUploaderDropzone"] button { min-height: 40px; }
+        .stButton > button, .stDownloadButton > button { width: 100%; min-height: 48px; font-size: .91rem; }
+        .branding-card { padding: 22px 15px; margin-top: 26px; }
+        .hadith-quote { font-size: .91rem; }
+        .hadith-ref, .branding-tag { font-size: .73rem; line-height: 1.5; }
+      }
+      @media (max-width: 420px) {
+        .block-container { padding-left: 10px; padding-right: 10px; }
+        .hero { padding: 19px 15px; }
+        .hero-title { font-size: 1.42rem; }
+        .stTabs [data-baseweb="tab"] { padding: 0 10px; font-size: .79rem; }
+        [data-testid="stMetricValue"] { font-size: 1.12rem; }
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # ============================================================
 # PDF FONT + URDU (RTL) HELPERS
