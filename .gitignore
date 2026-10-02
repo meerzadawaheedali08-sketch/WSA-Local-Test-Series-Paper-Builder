@@ -1,0 +1,19 @@
+# --- SECRETS: inhein kabhi GitHub par upload nahi karna ---
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+secrets.toml
+*.key
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
