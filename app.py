@@ -34,7 +34,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib.fonts import addMapping
 
-# Urdu / Arabic script support in PDF (optional - app bina iske bhi chalti hai)
+# Urdu / Arabic script support in PDF (optional - the app still works without it)
 try:
     import arabic_reshaper
     from bidi.algorithm import get_display
@@ -53,13 +53,14 @@ st.set_page_config(
     page_title="WSA Educational Test Series & Paper Builder",
     page_icon="🎓",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 # ============================================================
 # LLM PROVIDERS CONFIG (all use OpenAI-compatible endpoints)
 # ------------------------------------------------------------
-# Model names / free limits change often. Agar koi model "not found"
-# de, toh secrets mai GROQ_MODEL = "naya-model-id" likh do.
+# Model names and free limits change often. If a model is retired, set
+# GROQ_MODEL / GROQ_VISION_MODEL / GEMINI_MODEL in the secrets (no code change).
 #   Groq:        https://console.groq.com/keys
 #   Gemini:      https://aistudio.google.com/apikey
 # ============================================================
@@ -69,14 +70,14 @@ PROVIDERS = {
         "base_url": "https://api.groq.com/openai/v1",
         "env": "GROQ_API_KEY",
         "models": ["openai/gpt-oss-120b", "openai/gpt-oss-20b"],
-        # Photo se text nikalne ke liye (Groq ke vision models preview mai hain)
+        # Used to read text from photos (Groq vision models are in preview)
         "vision_models": ["qwen/qwen3.8-27b"],
     },
     "Gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "env": "GEMINI_API_KEY",
-        # "-latest" alias hamesha Google ke current Flash model par rehta hai,
-        # is liye purane model band hone par app nahi tootti.
+        # The "-latest" alias always points to Google's current Flash model,
+        # so the app keeps working when an older model is retired.
         "models": ["gemini-flash-latest", "gemini-3.1-flash-lite"],
         "vision_models": ["gemini-flash-latest", "gemini-3.1-flash-lite"],
     },
@@ -85,10 +86,13 @@ PROVIDERS = {
 AUTO_MODE = "Auto (Fallback)"
 AUTO_ORDER = ["Groq", "Gemini"]
 
-# Free tiers ki token limits chhoti hoti hain, isliye reference text cap
+# Free tiers have small token limits, so reference text is capped
 MAX_REFERENCE_CHARS = 9000
 
 LETTERS = "ABCD"
+
+# Messages starting with this prefix are safe to show to users as-is
+USER_MESSAGE_PREFIX = "[user] "
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 UPLOAD_TYPES = ["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp"]
@@ -100,11 +104,11 @@ def is_image(uploaded_file):
 
 
 def prepare_image_b64(uploaded_file, max_side=1800):
-    """Photo ko chhota (compress) karke base64 mai badalta hai (API limit ke andar rehne ke liye)."""
+    """Shrinks a photo and converts it to base64 (keeps it within API size limits)."""
     from PIL import Image, ImageOps
 
     img = Image.open(io.BytesIO(uploaded_file.getvalue()))
-    img = ImageOps.exif_transpose(img)  # mobile photo ka ulta / lait hona theek karta hai
+    img = ImageOps.exif_transpose(img)  # fixes sideways / upside-down phone photos
     if img.mode != "RGB":
         img = img.convert("RGB")
     img.thumbnail((max_side, max_side))
@@ -116,9 +120,10 @@ def prepare_image_b64(uploaded_file, max_side=1800):
 # ============================================================
 # SECRETS + SHARED-QUOTA PROTECTION
 # ------------------------------------------------------------
-# API key user ko kabhi nahi dikhti: wo server ke "secrets" mai rehti hai.
+# API keys are never shown to users. They live only on the server, in the
+# app "secrets" or in environment variables:
 #   - Streamlit Cloud: App settings -> Secrets
-#   - Local computer : .streamlit/secrets.toml  ya  .env file
+#   - Local computer : .streamlit/secrets.toml  or  .env file
 # ============================================================
 
 
@@ -132,7 +137,7 @@ def get_secret(name, default=""):
     return os.getenv(name, default).strip()
 
 
-# Optional: model retire ho jaye toh secrets mai GROQ_MODEL likh do (code na badalna pade)
+# Optional: if a model is retired, set GROQ_MODEL in the secrets (no code change needed)
 _groq_model_override = get_secret("GROQ_MODEL")
 if _groq_model_override:
     PROVIDERS["Groq"]["models"].insert(0, _groq_model_override)
@@ -146,35 +151,31 @@ if _gemini_override:
     PROVIDERS["Gemini"]["models"].insert(0, _gemini_override)
     PROVIDERS["Gemini"]["vision_models"].insert(0, _gemini_override)
 
-SESSION_COOLDOWN_SEC = 15  # ek user do requests ke beech kam az kam itna gap
-SESSION_MAX_CALLS = 20  # ek browser session mai zyada se zyada AI requests
+SESSION_COOLDOWN_SEC = 15  # minimum gap between two AI requests from one user
+SESSION_MAX_CALLS = 20  # maximum AI requests in one browser session
 try:
-    DAILY_LIMIT = int(get_secret("DAILY_LIMIT") or 400)  # sab users ki mila kar roz ki hadd
+    DAILY_LIMIT = int(get_secret("DAILY_LIMIT") or 400)  # total AI requests per day (all users)
 except ValueError:
     DAILY_LIMIT = 400
 
 
 @st.cache_resource
 def usage_store():
-    """Sab users ke darmiyan shared counter (server chalta rahe tak)."""
+    """Counter shared by all users (lives as long as the server runs)."""
     return {"day": date.today().isoformat(), "count": 0, "lock": threading.Lock()}
 
 
-def allow_ai_call(using_own_key, units=1):
-    """Shared free key ko bachane ke liye limits. Apni key wale users par koi limit nahi."""
-    if using_own_key:
-        return True
-
+def allow_ai_call(units=1):
+    """Protects the shared free API quota. Returns True if the request may go ahead."""
     ss = st.session_state
     now = time.time()
     wait = SESSION_COOLDOWN_SEC - (now - ss.get("_last_ai_call", 0))
     if wait > 0:
-        st.warning(f"⏳ Thora sabr karo, {int(wait) + 1} second baad dobara try karo.")
+        st.warning(f"⏳ Please wait {int(wait) + 1} seconds before trying again.")
         return False
     if ss.get("_ai_calls", 0) + units > SESSION_MAX_CALLS:
         st.error(
-            "Is session ki free limit khatam ho gayi. Page refresh karo ya sidebar"
-            " mai apni free Groq key dalo."
+            "You have reached the usage limit for this session. Please try again later."
         )
         return False
 
@@ -185,8 +186,7 @@ def allow_ai_call(using_own_key, units=1):
             store["day"], store["count"] = today, 0
         if store["count"] + units > DAILY_LIMIT:
             st.error(
-                "Aaj ki shared free limit khatam ho gayi. Kal dobara aana, ya sidebar"
-                " mai apni free Groq key (console.groq.com/keys) dal kar chalao."
+                "The daily free limit has been reached. Please come back tomorrow."
             )
             return False
         store["count"] += units
@@ -197,19 +197,21 @@ def allow_ai_call(using_own_key, units=1):
 
 
 def show_error(e):
+    """Shows a friendly message. Technical details only appear when DEBUG=1 is set."""
     msg = str(e)
     low = msg.lower()
-    if "429" in msg or "rate limit" in low or "quota" in low:
-        st.error(
-            "⏳ Free AI server abhi busy hai (limit lag gayi). 1-2 minute ruk kar"
-            " dobara try karo, ya sidebar mai apni free Groq key dalo."
-        )
+    print("AI error:", msg)  # visible in the server logs only
+    if msg.startswith(USER_MESSAGE_PREFIX):
+        st.error("❌ " + msg[len(USER_MESSAGE_PREFIX):])
+    elif "429" in msg or "rate limit" in low or "quota" in low:
+        st.error("⏳ The AI service is busy right now. Please wait a minute and try again.")
     elif "401" in msg or "api key" in low or "authentication" in low:
-        st.error("🔑 API key ka masla hai. Key dobara check karo.")
+        st.error("🔑 The AI service is not set up correctly. Please contact the administrator.")
     else:
-        st.error("❌ Error occurred. Dobara try karo.")
-    with st.expander("Technical details"):
-        st.code(msg)
+        st.error("❌ Something went wrong. Please try again.")
+    if get_secret("DEBUG") == "1":
+        with st.expander("Technical details (debug mode)"):
+            st.code(msg)
 
 
 # ============================================================
@@ -219,33 +221,135 @@ def show_error(e):
 st.markdown(
     """
     <style>
-        .stApp { background-color: #F8FAFC; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-        .hero-container {
-            background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
-            padding: 28px 32px;
+        :root {
+            --navy: #1E3A8A;
+            --blue: #2563EB;
+            --sky: #38BDF8;
+            --ink: #0F172A;
+            --muted: #64748B;
+            --line: #E2E8F0;
+        }
+
+        .stApp {
+            background: linear-gradient(180deg, #EAF0FB 0%, #F8FAFC 260px);
+            font-family: 'Inter', sans-serif;
+        }
+        .block-container { padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1180px; }
+
+        /* Hide Streamlit menu, footer and the sidebar (settings live on the server) */
+        #MainMenu, footer { visibility: hidden; }
+        [data-testid="stSidebar"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #38BDF8 120%);
+            padding: 30px 34px;
+            border-radius: 18px;
+            color: #fff;
+            box-shadow: 0 12px 30px -10px rgba(30, 58, 138, 0.45);
+            margin-bottom: 22px;
+        }
+        .hero-label { font-size: 0.85rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; opacity: 0.85; }
+        .hero-title { font-size: 2.2rem; font-weight: 800; margin: 6px 0 8px 0; letter-spacing: -0.5px; line-height: 1.15; }
+        .hero-subtitle { font-size: 1.02rem; opacity: 0.92; margin: 0 0 16px 0; max-width: 720px; }
+        .chip {
+            display: inline-block;
+            background: rgba(255,255,255,0.16);
+            border: 1px solid rgba(255,255,255,0.28);
+            padding: 5px 12px;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            margin: 0 8px 6px 0;
+        }
+
+        /* ---------- Cards ---------- */
+        div[class*="st-key-card"] {
+            background: #FFFFFF;
+            border: 1px solid var(--line) !important;
+            border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+        }
+        [data-testid="stMetric"] {
+            background: #F5F8FF;
+            border: 1px solid var(--line);
+            padding: 12px 16px;
             border-radius: 12px;
-            color: white;
-            box-shadow: 0 4px 12px rgba(30, 58, 138, 0.15);
-            margin-bottom: 25px;
         }
-        .hero-title { font-size: 2.3rem; font-weight: 800; margin: 0; letter-spacing: -0.5px; }
-        .hero-subtitle { font-size: 1.05rem; opacity: 0.9; margin-top: 8px; margin-bottom: 0; }
+        [data-testid="stMetricValue"] { color: var(--navy); font-weight: 800; }
 
-        .edu-card {
-            background-color: #FFFFFF;
-            border: 1px solid #E2E8F0;
+        /* ---------- Tabs ---------- */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 6px;
+            background: #E3EAF8;
+            padding: 6px;
+            border-radius: 14px;
+            border-bottom: none;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 44px;
+            padding: 0 20px;
             border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.03);
-            margin-bottom: 20px;
+            font-weight: 600;
+            color: #475569;
+            background: transparent;
+        }
+        .stTabs [aria-selected="true"] {
+            background: #FFFFFF;
+            color: var(--navy);
+            box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
+        }
+        .stTabs [data-baseweb="tab-highlight"],
+        .stTabs [data-baseweb="tab-border"] { display: none; }
+
+        /* ---------- Buttons ---------- */
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+            color: #fff;
+            font-weight: 700;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 24px;
+            box-shadow: 0 6px 16px -6px rgba(37, 99, 235, 0.6);
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+        }
+        .stButton > button[kind="primary"]:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px -8px rgba(37, 99, 235, 0.7);
+            color: #fff;
+        }
+        .stDownloadButton > button, .stButton > button[kind="secondary"] {
+            border-radius: 12px;
+            border: 1px solid #C7D5F0;
+            font-weight: 600;
+            color: var(--navy);
+            background: #F8FAFF;
+        }
+        .stDownloadButton > button:hover, .stButton > button[kind="secondary"]:hover {
+            border-color: var(--blue);
+            color: var(--blue);
         }
 
+        /* ---------- Inputs ---------- */
+        [data-testid="stFileUploaderDropzone"] {
+            border-radius: 12px;
+            border: 1.5px dashed #93B4F5;
+            background: #F8FAFF;
+        }
+        .section-title { font-size: 1.05rem; font-weight: 700; color: var(--navy); margin: 2px 0 2px 0; }
+        .section-hint { font-size: 0.86rem; color: var(--muted); margin-bottom: 8px; }
+        .ai-note { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 6px; }
+
+        /* ---------- Footer ---------- */
         .branding-card {
             background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             color: #F8FAFC;
-            padding: 24px 20px;
-            border-radius: 12px;
+            padding: 26px 22px;
+            border-radius: 16px;
             border-top: 4px solid #3B82F6;
             text-align: center;
             margin-top: 40px;
@@ -257,13 +361,9 @@ st.markdown(
         .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; letter-spacing: 0.2px; }
         .branding-tag { font-size: 0.82rem; color: #94A3B8; letter-spacing: 0.6px; text-transform: uppercase; }
 
-        .stButton > button {
-            background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
-            color: white;
-            font-weight: 600;
-            border-radius: 8px;
-            border: none;
-            padding: 10px 24px;
+        @media (max-width: 640px) {
+            .hero { padding: 22px 20px; }
+            .hero-title { font-size: 1.6rem; }
         }
     </style>
     """,
@@ -277,7 +377,7 @@ st.markdown(
 
 
 def register_pdf_fonts():
-    """Unicode font dhoondta hai (Windows Arial / Linux DejaVu). Na mile toh Helvetica."""
+    """Finds a Unicode font (Windows Arial / Linux DejaVu). Falls back to Helvetica."""
     candidates = [
         (
             "C:/Windows/Fonts/arial.ttf",
@@ -332,7 +432,7 @@ def is_rtl_line(line):
 
 
 def shape_text(line):
-    """Urdu/Arabic text ko PDF ke liye sahi shakal deta hai (joined letters + RTL)."""
+    """Prepares Urdu/Arabic text for the PDF (joined letters + right-to-left)."""
     if RTL_OK and ARABIC_RE.search(line):
         try:
             return get_display(arabic_reshaper.reshape(line))
@@ -342,7 +442,7 @@ def shape_text(line):
 
 
 def clean_text(text):
-    """AI ke output se markdown ki ** aur ` hata deta hai."""
+    """Removes markdown characters (** and `) from AI output."""
     text = str(text or "")
     text = text.replace("**", "").replace("`", "")
     return text.strip()
@@ -372,7 +472,7 @@ JSON_SCHEMA_TEXT = """{
 
 
 def normalize_paper(obj, mcq_count, short_count, long_count):
-    """AI ke JSON ko saaf-suthri aur safe structure mai badalta hai."""
+    """Converts the AI's JSON into a clean, safe structure."""
     mcqs = []
     for item in obj.get("mcqs") or []:
         if not isinstance(item, dict):
@@ -385,7 +485,7 @@ def normalize_paper(obj, mcq_count, short_count, long_count):
         for i, o in enumerate(list(opts)[:4]):
             o = clean_text(o)
             m = re.match(r"^\(?([A-Da-d])[\)\.:]\s+", o)
-            # sirf tab prefix hatao jab wo us position ka sahi letter ho
+            # remove the prefix only when it is the correct letter for that position
             if m and m.group(1).upper() == LETTERS[i]:
                 o = o[m.end():].strip()
             cleaned.append(o)
@@ -546,7 +646,7 @@ def paper_to_text(data, meta, include_key=True):
 
 
 def paper_to_markdown(data, meta):
-    """Screen par dikhane ke liye (options har line par, sequence mai)."""
+    """Markdown version for the screen (each option on its own line, in order)."""
 
     def br(t):
         return t.replace("\n", "  \n")
@@ -913,7 +1013,7 @@ def _options_answer(answer, S, width):
 
 
 # ============================================================
-# WORD (.docx) EXPORT - Urdu ke liye sab se bharosemand option
+# WORD (.docx) EXPORT - the most reliable option for Urdu text
 # ============================================================
 
 
@@ -1122,7 +1222,7 @@ def call_llm(
     image_b64=None,
 ):
     """
-    image_b64: agar diya ho toh vision model se image padhwati hai.
+    image_b64: if given, the image is read with a vision model.
     llm_cfg = {
         "keys": {"Groq": "...", "Gemini": "..."},
         "provider": "Auto (Fallback)" | "Groq" | "Gemini",
@@ -1139,14 +1239,13 @@ def call_llm(
         provider_order = [provider_choice] if keys.get(provider_choice) else []
 
     if image_b64:
-        # sirf wo providers jinke paas vision model hai
+        # only providers that have a vision model
         provider_order = [p for p in provider_order if PROVIDERS[p]["vision_models"]]
 
     if not provider_order:
         raise Exception(
-            "Koi API key nahi mili"
-            + (" jo photo (vision) padh sake. Groq ya Gemini key chahiye." if image_b64 else ".")
-            + " Sidebar mai apni Groq key dalo."
+            "No AI key is configured on the server"
+            + (" for reading photos (a Groq or Gemini key is needed)." if image_b64 else ".")
         )
 
     errors = []
@@ -1164,7 +1263,7 @@ def call_llm(
 
         for model_name in models_to_try:
             if image_b64:
-                # vision models ke liye instruction user message ke andar hi rakhte hain
+                # for vision models the instruction goes inside the user message
                 messages = [
                     {
                         "role": "user",
@@ -1193,7 +1292,7 @@ def call_llm(
                         **extra,
                     )
                     text = response.choices[0].message.content or ""
-                    # kuch reasoning models <think>...</think> bhi bhej dete hain
+                    # some reasoning models also return <think>...</think> blocks
                     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
                     if text:
                         return text
@@ -1205,7 +1304,7 @@ def call_llm(
                     errors.append(f"{provider}/{model_name}: {err[:160]}")
                     continue
 
-    raise Exception("Sab providers fail ho gaye:\n- " + "\n- ".join(errors))
+    raise Exception("All AI providers failed:\n- " + "\n- ".join(errors))
 
 
 # ============================================================
@@ -1214,7 +1313,7 @@ def call_llm(
 
 
 def extract_text_from_image(llm_cfg, uploaded_file):
-    """Photo (paper, answer sheet, result card) se text nikalta hai. Urdu + English."""
+    """Reads text from a photo (paper, answer sheet, result card). Urdu + English."""
     image_b64 = prepare_image_b64(uploaded_file)
     text = call_llm(
         llm_cfg,
@@ -1231,13 +1330,15 @@ def extract_text_from_image(llm_cfg, uploaded_file):
     )
     if "UNREADABLE" in text.upper() and len(text) < 40:
         raise Exception(
-            "Photo se text nahi nikal saka. Saaf, roshan aur seedhi tasveer upload karo."
+            USER_MESSAGE_PREFIX
+            + "Could not read any text from the photo. Please upload a clear,"
+            " well-lit and straight photo."
         )
     return text
 
 
 def read_upload(uploaded_file, llm_cfg):
-    """PDF/DOCX/TXT seedha padhta hai, photo ho toh AI (vision) se text nikalta hai."""
+    """Reads PDF/DOCX/TXT directly. Photos are read with the AI vision model."""
     if is_image(uploaded_file):
         return extract_text_from_image(llm_cfg, uploaded_file)
     return process_uploaded_file(uploaded_file)
@@ -1263,6 +1364,7 @@ def generate_test_paper(
     short_count,
     long_count,
     diff_level,
+    level_note="",
 ):
     pdf_text = read_upload(uploaded_pdf, llm_cfg)[:MAX_REFERENCE_CHARS]
 
@@ -1287,6 +1389,7 @@ Create a professional examination paper as a JSON object.
 EXAM CATEGORY / STYLE: {test_type}
 TOPIC / SUBJECT: {topic}
 DIFFICULTY LEVEL: {diff_level}
+LEARNER LEVEL: {level_note or "General audience"}
 LANGUAGE: {language}
 {language_instruction}
 
@@ -1333,13 +1436,14 @@ Return ONLY a valid JSON object in exactly this structure, with no extra text:
             data = parse_paper_json(raw, mcq_count, short_count, long_count)
             if data["mcqs"] or data["short"] or data["long"]:
                 return data
-            last_error = "AI ne koi question nahi diya."
+            last_error = "the AI returned no questions"
         except Exception as e:
             last_error = str(e)
 
     raise Exception(
-        f"AI ne paper sahi format mai nahi diya ({last_error}). Dobara Generate dabao"
-        " ya sidebar mai koi aur provider select karo."
+        USER_MESSAGE_PREFIX
+        + "The AI did not return the paper in the expected format"
+        f" ({last_error}). Please click Generate again."
     )
 
 
@@ -1406,203 +1510,339 @@ Provide a comprehensive Diagnostic & Improvement Report structured as follows:
 
 
 def safe_download_data(builder, *args, **kwargs):
-    """PDF/Word banane mai koi masla aaye toh poori app crash na ho."""
+    """If building a PDF/Word file fails, show a warning instead of crashing the app."""
     try:
         return builder(*args, **kwargs)
     except Exception as e:
-        st.warning(f"File banane mai masla aaya: {e}")
+        st.warning("Could not create this file. Please try again.")
+        print("File build error:", e)
         return None
 
 
 # ============================================================
-# SIDEBAR & HEADER
+# EXAM CATEGORIES: group -> class / level -> subjects, difficulty, time, AI note
 # ============================================================
 
-with st.sidebar:
-    st.header("⚙️ Settings")
+EXAM_GROUPS = {
+    "School (Class 1–10)": [f"Class {i}" for i in range(1, 11)],
+    "College (Class 11–12)": ["Class 11 (FA / FSc / ICS)", "Class 12 (FA / FSc / ICS)"],
+    "University": ["Bachelor (BS / BA / BSc)", "Master (MS / MA / MSc)"],
+    "Competitive Tests": [
+        "General Test (NTS / CTSP / SBK)",
+        "PPSC / FPSC",
+        "BPSC",
+        "CSS",
+        "CS / IT Screening Test",
+    ],
+    "Custom": ["Custom Mock Test"],
+}
 
-    server_keys = {name: get_secret(cfg["env"]) for name, cfg in PROVIDERS.items()}
-    server_ready = any(server_keys.values())
+OTHER_SUBJECT = "Other (type below)"
+DIFF_LABELS = {1: "Very Easy", 2: "Easy", 3: "Medium", 4: "Hard", 5: "Very Hard"}
+LANGUAGES = ["English", "Urdu", "Bilingual (English + Urdu)"]
 
-    if server_ready:
-        st.success("✅ AI tayyar hai. Koi API key dalne ki zaroorat nahi.")
+COMPETITIVE_DEFAULTS = {
+    "General Test (NTS / CTSP / SBK)": (3, 60),
+    "PPSC / FPSC": (4, 90),
+    "BPSC": (4, 90),
+    "CSS": (5, 120),
+    "CS / IT Screening Test": (4, 60),
+}
+
+
+def subjects_for(group, level):
+    """Common subjects for the selected class / level."""
+    if group == "School (Class 1–10)":
+        n = int(re.search(r"\d+", level).group())
+        if n <= 2:
+            base = ["English", "Urdu", "Mathematics", "General Knowledge", "Islamiyat"]
+        elif n <= 5:
+            base = ["English", "Urdu", "Mathematics", "General Science", "Social Studies",
+                    "Islamiyat", "Computer"]
+        elif n <= 8:
+            base = ["English", "Urdu", "Mathematics", "General Science", "Social Studies",
+                    "Islamiyat", "Computer Science", "Geography", "History"]
+        else:
+            base = ["English", "Urdu", "Mathematics", "Physics", "Chemistry", "Biology",
+                    "Computer Science", "Pakistan Studies", "Islamiyat", "General Science"]
+    elif group == "College (Class 11–12)":
+        base = ["Physics", "Chemistry", "Biology", "Mathematics", "Computer Science",
+                "English", "Urdu", "Pakistan Studies", "Islamiyat", "Statistics",
+                "Economics", "Accounting"]
+    elif group == "University":
+        base = ["Computer Science", "Information Technology", "Software Engineering",
+                "Mathematics", "Physics", "Chemistry", "Biology", "English",
+                "Business Administration", "Economics", "Education"]
+    elif group == "Competitive Tests":
+        base = ["General Knowledge", "English", "Urdu", "Pakistan Studies", "Islamic Studies",
+                "Current Affairs", "Everyday Science", "Quantitative / Mathematics",
+                "Analytical Reasoning / IQ", "Computer Science / IT"]
     else:
-        st.warning("Server par API key set nahi hai. Neeche apni Groq key dalo.")
+        base = ["General"]
+    return base + [OTHER_SUBJECT]
 
-    with st.expander("🔑 Apni Groq key use karo (optional)", expanded=not server_ready):
-        own_key = st.text_input(
-            "Groq API Key",
-            type="password",
-            help="Free key: console.groq.com/keys. Apni key par koi limit nahi lagti.",
-        ).strip()
 
-    using_own_key = bool(own_key)
-    if using_own_key:
-        keys = {name: "" for name in PROVIDERS}
-        keys["Groq"] = own_key
+def level_profile(group, level):
+    """Default difficulty (1-5), time (minutes) and a note for the AI, based on the class / level."""
+    curriculum = "Follow the Pakistani national curriculum / textbook board syllabus."
+
+    if group == "School (Class 1–10)":
+        n = int(re.search(r"\d+", level).group())
+        if n <= 2:
+            diff, time_min = 1, 30
+            band = "Use very simple words and very short sentences. Keep every question basic and use everyday examples."
+        elif n <= 5:
+            diff, time_min = (1 if n == 3 else 2), 45
+            band = "Use simple words and short sentences. Questions must suit primary-level learners."
+        elif n <= 8:
+            diff, time_min = (2 if n < 8 else 3), 60
+            band = "Use clear, simple language suitable for middle-level students."
+        else:
+            diff, time_min = 3, 90
+            band = "Match the Secondary School Certificate (SSC / Matric) exam standard."
+        note = (
+            f"Class {n} students (about {n + 5}-{n + 6} years old). {band} {curriculum}"
+        )
+    elif group == "College (Class 11–12)":
+        is_12 = level.startswith("Class 12")
+        diff, time_min = (4, 120) if is_12 else (3, 90)
+        note = f"{level} students. Match the Intermediate (HSSC) exam standard. {curriculum}"
+    elif group == "University":
+        diff, time_min = 4, 120
+        note = f"University students ({level}). Use university-level terminology and conceptual depth."
+    elif group == "Competitive Tests":
+        diff, time_min = COMPETITIVE_DEFAULTS.get(level, (3, 60))
+        note = (
+            f"Candidates preparing for {level} in Pakistan. Match the style and standard of"
+            " such recruitment / screening tests: factual, concept-based and application questions."
+        )
     else:
-        keys = server_keys
+        diff, time_min, note = 3, 60, ""
 
-    llm_cfg = {"keys": keys, "provider": AUTO_MODE, "custom_model": ""}
-    has_any_key = any(keys.values())
+    return {"difficulty": diff, "time_min": time_min, "note": note}
 
-    st.markdown("---")
-    st.markdown(
-        """
-        <div style="
-            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-            padding: 16px;
-            border-radius: 10px;
-            border-top: 3px solid #3B82F6;
-            text-align: center;
-            color: white;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-        ">
-            <div style="font-size: 0.88rem; font-style: italic; color: #F1F5F9; line-height: 1.4; margin-bottom: 6px;">
-                "Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."
-            </div>
-            <div style="font-size: 0.75rem; color: #60A5FA; font-weight: 600; margin-bottom: 10px;">
-                — Prophet Muhammad (PBUH)<br><b>Sahih Muslim, Book 35, Hadith 6518</b>
-            </div>
-            <hr style="border: 0; border-top: 1px solid #334155; margin: 10px 0;">
-            <div style="font-size: 0.9rem; font-weight: 700; color: #38BDF8;">
-                Designed by Waheed Ali Hamouzai
-            </div>
-            <div style="font-size: 0.7rem; color: #94A3B8; letter-spacing: 0.5px; text-transform: uppercase; margin-top: 2px;">
-                WSA Educational Community
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-NO_KEY_MSG = "⚠️ AI key set nahi hai. Sidebar mai apni Groq key dalo."
+def apply_level_defaults():
+    """Sets difficulty, time and subject automatically when the class / level changes."""
+    ss = st.session_state
+    prof = level_profile(ss["exam_group"], ss["exam_level"])
+    ss["difficulty"] = prof["difficulty"]
+    ss["time_min"] = prof["time_min"]
+    ss["subject"] = subjects_for(ss["exam_group"], ss["exam_level"])[0]
+
+
+def on_group_change():
+    st.session_state["exam_level"] = EXAM_GROUPS[st.session_state["exam_group"]][0]
+    apply_level_defaults()
+
+
+def on_level_change():
+    apply_level_defaults()
+
+
+def use_generated_paper():
+    st.session_state["q_paper_text"] = st.session_state.get("generated_paper", "")
+
+
+# First-run defaults
+_first_group = list(EXAM_GROUPS)[0]
+_defaults = {
+    "exam_group": _first_group,
+    "exam_level": EXAM_GROUPS[_first_group][0],
+    "chapter": "",
+    "subject_other": "",
+    "language": "English",
+    "mcq_count": 10,
+    "short_count": 5,
+    "long_count": 2,
+    "institute": "WSA Educational Community",
+    "mcq_marks": 1,
+    "short_marks": 2,
+    "long_marks": 5,
+    "q_paper_text": "",
+}
+for _k, _v in _defaults.items():
+    st.session_state.setdefault(_k, _v)
+if "difficulty" not in st.session_state:
+    apply_level_defaults()
+
+
+# ============================================================
+# AI KEYS (server side only) + HEADER
+# ============================================================
+
+llm_cfg = {
+    "keys": {name: get_secret(cfg["env"]) for name, cfg in PROVIDERS.items()},
+    "provider": AUTO_MODE,
+    "custom_model": "",
+}
+has_any_key = any(llm_cfg["keys"].values())
+
+NO_KEY_MSG = "⚠️ The AI service is not configured yet. Please contact the administrator."
 
 st.markdown(
-    """<div class="hero-container">
-<div class="hero-title">🎓 WSA Educational Test Series & Paper Builder</div>
-<div class="hero-subtitle">AI-powered exam paper generation, student evaluation, and performance diagnostics.</div>
+    """<div class="hero">
+<div class="hero-label">🎓 WSA Educational Community</div>
+<div class="hero-title">Test Series & Paper Builder</div>
+<div class="hero-subtitle">Create exam papers for any class or competitive test, check answer sheets, and find weak areas in minutes.</div>
+<span class="chip">English · Urdu · Bilingual</span>
+<span class="chip">PDF & Word export</span>
+<span class="chip">Answer key included</span>
+<span class="chip">Photo upload</span>
 </div>""",
     unsafe_allow_html=True,
 )
 
+if not has_any_key:
+    st.error(NO_KEY_MSG)
+    st.caption("Administrator: add GROQ_API_KEY (and optionally GEMINI_API_KEY) in the app secrets.")
+
 tab1, tab2, tab3 = st.tabs(
     [
-        "📝 Generate Test Paper",
-        "📊 Evaluate Student Answers",
-        "🎯 Quick Test Diagnostic & Focus Areas",
+        "📝 Create Paper",
+        "📊 Check Answers",
+        "🎯 Test Diagnostic",
     ]
 )
 
 
 # ============================================================
-# TAB 1 — GENERATE PAPER
+# TAB 1 — CREATE PAPER
 # ============================================================
 
 with tab1:
-    st.markdown('<div class="edu-card">', unsafe_allow_html=True)
-    st.subheader("Create New Test Paper")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        test_type = st.selectbox(
-            "Exam Category",
-            [
-                "General Competitive Test (CTSP / SBK / NTS)",
-                "BPSC",
-                "School / College (9th–12th)",
-                "CS / IT Screening Test",
-                "Custom Mock Test",
-            ],
+    with st.container(border=True, key="card_1"):
+        st.markdown('<div class="section-title">1. Class and subject</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-hint">Pick the class or test. Difficulty and time are set for you.</div>',
+            unsafe_allow_html=True,
         )
-        topic = st.text_input(
-            "Topic / Subject", placeholder="e.g., Computer Science / Pak Studies"
-        )
-        language = st.selectbox(
-            "Language Mode", ["English", "Urdu", "Bilingual (English + Urdu)"]
-        )
-        difficulty = st.slider("Difficulty Level", 1, 5, 3)
-        diff_labels = {
-            1: "Very Easy",
-            2: "Easy",
-            3: "Medium",
-            4: "Hard",
-            5: "Very Hard",
-        }
-        diff_level = diff_labels[difficulty]
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.selectbox(
+                "Category",
+                list(EXAM_GROUPS),
+                key="exam_group",
+                on_change=on_group_change,
+            )
+        with c2:
+            st.selectbox(
+                "Class / Test",
+                EXAM_GROUPS[st.session_state["exam_group"]],
+                key="exam_level",
+                on_change=on_level_change,
+            )
+        with c3:
+            st.selectbox(
+                "Subject",
+                subjects_for(st.session_state["exam_group"], st.session_state["exam_level"]),
+                key="subject",
+            )
 
-    with col2:
+        if st.session_state["subject"] == OTHER_SUBJECT:
+            st.text_input(
+                "Subject name",
+                key="subject_other",
+                placeholder="e.g., Home Economics",
+            )
+
+        t1, t2, t3 = st.columns([2, 1, 1])
+        with t1:
+            st.text_input(
+                "Chapter / Topic (optional)",
+                key="chapter",
+                placeholder="e.g., Chapter 3 — Force and Motion",
+            )
+        with t2:
+            st.selectbox("Language", LANGUAGES, key="language")
+        with t3:
+            st.slider("Difficulty", 1, 5, key="difficulty")
+        st.caption(
+            f"Difficulty: **{DIFF_LABELS[st.session_state['difficulty']]}** "
+            f"(set automatically for {st.session_state['exam_level']}, you can change it)."
+        )
+
+    with st.container(border=True, key="card_2"):
+        st.markdown('<div class="section-title">2. Questions</div>', unsafe_allow_html=True)
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            st.number_input("Number of MCQs", 0, 50, key="mcq_count")
+        with q2:
+            st.number_input("Number of Short Questions", 0, 20, key="short_count")
+        with q3:
+            st.number_input("Number of Long Questions", 0, 10, key="long_count")
+
         uploaded_pdf = st.file_uploader(
-            f"Upload Reference Document or Photo (Optional) — {UPLOAD_HINT}",
+            f"Reference material (optional) — {UPLOAD_HINT}",
             type=UPLOAD_TYPES,
+            help="Upload a chapter, notes or a textbook page photo and the questions will be based on it.",
         )
         preview_if_image(uploaded_pdf)
-        mcq_count = st.number_input("Number of MCQs", 0, 50, 10)
-        short_count = st.number_input("Number of Short Questions", 0, 20, 5)
-        long_count = st.number_input("Number of Long Questions", 0, 10, 2)
 
-    with st.expander("🏫 Paper Header, Marks & Time (optional)"):
-        h1, h2 = st.columns(2)
-        with h1:
-            institute = st.text_input(
-                "Institute / Academy Name", value="WSA Educational Community"
-            )
-            time_min = st.number_input("Time Allowed (minutes)", 5, 300, 60, step=5)
-        with h2:
-            mcq_marks = st.number_input("Marks per MCQ", 1, 10, 1)
-            short_marks = st.number_input("Marks per Short Question", 1, 20, 2)
-            long_marks = st.number_input("Marks per Long Question", 1, 50, 5)
+        with st.expander("🏫 Paper header, marks and time (optional)"):
+            h1, h2 = st.columns(2)
+            with h1:
+                st.text_input("Institute / Academy name", key="institute")
+                st.number_input("Time allowed (minutes)", 5, 300, key="time_min", step=5)
+            with h2:
+                st.number_input("Marks per MCQ", 1, 10, key="mcq_marks")
+                st.number_input("Marks per Short Question", 1, 20, key="short_marks")
+                st.number_input("Marks per Long Question", 1, 50, key="long_marks")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    ss = st.session_state
+    subject_name = (
+        ss["subject_other"].strip() if ss["subject"] == OTHER_SUBJECT else ss["subject"]
+    )
+    topic_text = subject_name + (f" — {ss['chapter'].strip()}" if ss["chapter"].strip() else "")
 
-    if st.button("🚀 Generate Test Paper", use_container_width=True):
+    if st.button("🚀 Generate Test Paper", type="primary", use_container_width=True):
         if not has_any_key:
             st.error(NO_KEY_MSG)
-        elif not topic.strip():
-            st.error("⚠️ Please enter a topic or subject name.")
-        elif mcq_count + short_count + long_count == 0:
-            st.error("⚠️ Kam az kam ek question chahiye.")
-        elif not allow_ai_call(using_own_key, units=1 + int(is_image(uploaded_pdf))):
-            pass  # limit message allow_ai_call ne dikha diya
+        elif not subject_name:
+            st.error("⚠️ Please enter the subject name.")
+        elif ss["mcq_count"] + ss["short_count"] + ss["long_count"] == 0:
+            st.error("⚠️ Please ask for at least one question.")
+        elif not allow_ai_call(units=1 + int(is_image(uploaded_pdf))):
+            pass  # allow_ai_call already showed the reason
         else:
-            with st.spinner("Generating professional test paper via AI... Please wait."):
+            profile = level_profile(ss["exam_group"], ss["exam_level"])
+            with st.spinner("Creating your test paper... this takes a few seconds."):
                 try:
                     paper = generate_test_paper(
                         llm_cfg,
-                        topic,
+                        topic_text,
                         uploaded_pdf,
-                        test_type,
-                        language,
-                        mcq_count,
-                        short_count,
-                        long_count,
-                        diff_level,
+                        ss["exam_level"],
+                        ss["language"],
+                        ss["mcq_count"],
+                        ss["short_count"],
+                        ss["long_count"],
+                        DIFF_LABELS[ss["difficulty"]],
+                        profile["note"],
                     )
                     meta = {
-                        "institute": institute.strip() or "WSA Educational Community",
-                        "category": test_type,
-                        "topic": topic.strip(),
-                        "language": language,
-                        "time_min": int(time_min),
-                        "mcq_marks": int(mcq_marks),
-                        "short_marks": int(short_marks),
-                        "long_marks": int(long_marks),
+                        "institute": ss["institute"].strip() or "WSA Educational Community",
+                        "category": ss["exam_level"],
+                        "topic": topic_text,
+                        "language": ss["language"],
+                        "time_min": int(ss["time_min"]),
+                        "mcq_marks": int(ss["mcq_marks"]),
+                        "short_marks": int(ss["short_marks"]),
+                        "long_marks": int(ss["long_marks"]),
                     }
                     meta["total_marks"] = compute_total_marks(paper, meta)
 
-                    st.session_state["paper_data"] = paper
-                    st.session_state["paper_meta"] = meta
-                    st.session_state["generated_paper"] = paper_to_text(
-                        paper, meta, include_key=True
-                    )
+                    ss["paper_data"] = paper
+                    ss["paper_meta"] = meta
+                    ss["generated_paper"] = paper_to_text(paper, meta, include_key=True)
 
                     got = (len(paper["mcqs"]), len(paper["short"]), len(paper["long"]))
-                    want = (mcq_count, short_count, long_count)
+                    want = (ss["mcq_count"], ss["short_count"], ss["long_count"])
                     if got != want:
                         st.warning(
-                            f"AI ne MCQ/Short/Long = {got} diye, aap ne {want} maange thay."
-                            " Zaroorat ho toh dobara Generate karo."
+                            f"The AI created {got[0]} MCQs, {got[1]} short and {got[2]} long"
+                            f" questions, but you asked for {want[0]}, {want[1]} and {want[2]}."
+                            " You can click Generate again."
                         )
                 except Exception as e:
                     show_error(e)
@@ -1611,13 +1851,20 @@ with tab1:
         paper = st.session_state["paper_data"]
         meta = st.session_state["paper_meta"]
 
-        st.divider()
-        st.subheader("📄 Generated Test Paper")
-        st.markdown(paper_to_markdown(paper, meta))
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total marks", meta["total_marks"])
+        m2.metric("Time", f"{meta['time_min']} min")
+        m3.metric("MCQs", len(paper["mcqs"]))
+        m4.metric("Short / Long", f"{len(paper['short'])} / {len(paper['long'])}")
 
-        with st.expander("🔑 Answer Key (Teacher Copy)"):
+        with st.container(border=True, key="card_3"):
+            st.markdown(paper_to_markdown(paper, meta))
+
+        with st.expander("🔑 Answer key (teacher copy)"):
             st.markdown(answer_key_markdown(paper, meta))
 
+        st.markdown('<div class="section-title">Download</div>', unsafe_allow_html=True)
         d1, d2 = st.columns(2)
         d3, d4 = st.columns(2)
 
@@ -1661,74 +1908,78 @@ with tab1:
                 use_container_width=True,
             )
 
-        if meta["language"] != "English" and not RTL_OK:
-            st.info(
-                "Urdu PDF ke liye: `pip install arabic-reshaper python-bidi` chalao."
-                " Word (.docx) file mai Urdu hamesha theek aata hai."
-            )
+        if meta["language"] != "English":
+            st.info("Tip: For Urdu or Bilingual papers, the Word (.docx) file is the most reliable option.")
+        st.markdown(
+            '<div class="ai-note">AI-generated content can contain mistakes. Please review the paper before using it.</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================
-# TAB 2 — EVALUATE ANSWERS
+# TAB 2 — CHECK ANSWERS
 # ============================================================
 
 with tab2:
-    st.subheader("📊 Evaluate Student Answers")
-    default_paper = st.session_state.get("generated_paper", "")
-
-    col_paper, col_answer = st.columns(2)
-
-    with col_paper:
-        st.markdown("### 1️⃣ Question Paper / Answer Key")
-        paper_file = st.file_uploader(
-            f"Upload Paper ({UPLOAD_HINT})",
-            type=UPLOAD_TYPES,
-            key="p_up",
-        )
-        preview_if_image(paper_file)
-        question_paper_text = st.text_area(
-            "Or Paste Text Directly",
-            value=default_paper,
-            height=200,
-            key="q_paper_text",
+    with st.container(border=True, key="card_4"):
+        st.markdown('<div class="section-title">Check student answers</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-hint">Add the question paper (with answer key) and the student\'s answer sheet. You can upload a file or a photo, or paste text.</div>',
+            unsafe_allow_html=True,
         )
 
-    with col_answer:
-        st.markdown("### 2️⃣ Student Answer Sheet")
-        student_file = st.file_uploader(
-            f"Upload Answers ({UPLOAD_HINT})",
-            type=UPLOAD_TYPES,
-            key="s_up",
-        )
-        preview_if_image(student_file)
-        student_answers_text = st.text_area(
-            "Or Paste Text Directly", height=200, key="s_answers_text"
-        )
+        col_paper, col_answer = st.columns(2)
 
-    if st.button("📊 Evaluate Answers", use_container_width=True):
+        with col_paper:
+            st.markdown("**1️⃣ Question paper / answer key**")
+            paper_file = st.file_uploader(
+                f"Upload paper ({UPLOAD_HINT})",
+                type=UPLOAD_TYPES,
+                key="p_up",
+            )
+            preview_if_image(paper_file)
+            if st.session_state.get("generated_paper"):
+                st.button(
+                    "📄 Use the paper I just created",
+                    on_click=use_generated_paper,
+                    use_container_width=True,
+                )
+            question_paper_text = st.text_area(
+                "Or paste text",
+                height=200,
+                key="q_paper_text",
+            )
+
+        with col_answer:
+            st.markdown("**2️⃣ Student answer sheet**")
+            student_file = st.file_uploader(
+                f"Upload answers ({UPLOAD_HINT})",
+                type=UPLOAD_TYPES,
+                key="s_up",
+            )
+            preview_if_image(student_file)
+            student_answers_text = st.text_area(
+                "Or paste text", height=200, key="s_answers_text"
+            )
+
+    if st.button("📊 Check Answers", type="primary", use_container_width=True):
         if not has_any_key:
             st.error(NO_KEY_MSG)
         else:
-            p_text = process_uploaded_file(paper_file)  # photo ho toh abhi khali
+            p_text = process_uploaded_file(paper_file)  # photos are read later with AI
             a_text = process_uploaded_file(student_file)
             paper_pasted = question_paper_text.strip()
             answers_pasted = student_answers_text.strip()
             n_images = int(is_image(paper_file)) + int(is_image(student_file))
 
             if not (p_text or paper_pasted or is_image(paper_file)):
-                st.error(
-                    "⚠️ Question paper content is missing. Please upload or paste"
-                    " text."
-                )
+                st.error("⚠️ The question paper is missing. Please upload it or paste the text.")
             elif not (a_text or answers_pasted or is_image(student_file)):
-                st.error(
-                    "⚠️ Student answer content is missing. Please upload or paste"
-                    " text."
-                )
-            elif not allow_ai_call(using_own_key, units=1 + n_images):
-                pass  # limit message allow_ai_call ne dikha diya
+                st.error("⚠️ The student's answers are missing. Please upload them or paste the text.")
+            elif not allow_ai_call(units=1 + n_images):
+                pass  # allow_ai_call already showed the reason
             else:
-                with st.spinner("Evaluating student answers via AI... Please wait."):
+                with st.spinner("Checking the answers... please wait."):
                     try:
                         if is_image(paper_file):
                             p_text = read_upload(paper_file, llm_cfg)
@@ -1742,14 +1993,15 @@ with tab2:
                         show_error(e)
 
     if "evaluation" in st.session_state:
-        st.divider()
-        st.subheader("📋 Evaluation Result")
-        st.markdown(st.session_state["evaluation"])
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        with st.container(border=True, key="card_5"):
+            st.markdown('<div class="section-title">📋 Evaluation result</div>', unsafe_allow_html=True)
+            st.markdown(st.session_state["evaluation"])
 
         col_d1, col_d2 = st.columns(2)
         with col_d1:
             st.download_button(
-                "⬇️ Download Text Report (.txt)",
+                "⬇️ Download report (.txt)",
                 data=st.session_state["evaluation"],
                 file_name="WSA_Student_Evaluation.txt",
                 mime="text/plain",
@@ -1763,77 +2015,75 @@ with tab2:
             )
             if eval_pdf:
                 st.download_button(
-                    "⬇️ Download PDF Report (.pdf)",
+                    "⬇️ Download report (.pdf)",
                     data=eval_pdf,
                     file_name="WSA_Student_Evaluation.pdf",
                     mime="application/pdf",
                     use_container_width=True,
                 )
+        st.markdown(
+            '<div class="ai-note">AI marking can make mistakes. Please review important results yourself.</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================
-# TAB 3 — RANDOM TEST DIAGNOSTIC & IMPROVEMENT
+# TAB 3 — TEST DIAGNOSTIC
 # ============================================================
 
 with tab3:
-    st.subheader("🎯 Test Performance Diagnostic & Focus Area Planner")
-    st.markdown(
-        "Upload or paste any random solved test, question paper, or result card to"
-        " receive a detailed breakdown of strengths, weaknesses, focus areas, and"
-        " improvement plans."
-    )
-
-    col_diag1, col_diag2 = st.columns(2)
-
-    with col_diag1:
-        st.markdown("### 📄 Test File / Raw Data")
-        random_test_file = st.file_uploader(
-            f"Upload Test or Result Document ({UPLOAD_HINT})",
-            type=UPLOAD_TYPES,
-            key="random_test_up",
-        )
-        preview_if_image(random_test_file)
-        random_test_text = st.text_area(
-            "Or Paste Raw Test Content / Scores Directly",
-            height=200,
-            key="random_test_text",
-            placeholder=(
-                "e.g., Question 1: Incorrect answer selected...\nQuestion 2:"
-                " Right...\nOR paste raw quiz content here."
-            ),
+    with st.container(border=True, key="card_6"):
+        st.markdown('<div class="section-title">Find strengths and weak areas</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-hint">Upload or paste any solved test, question paper or result card to get a clear improvement plan.</div>',
+            unsafe_allow_html=True,
         )
 
-    with col_diag2:
-        st.markdown("### ⚙️ Context & Target Goals (Optional)")
-        user_context = st.text_area(
-            "Target Exam / Student Goal",
-            height=270,
-            key="user_context",
-            placeholder=(
-                "e.g., Preparing for BPSC Computer Science / SBK Screening Test."
-                " Target score is 80%+."
-            ),
-        )
+        col_diag1, col_diag2 = st.columns(2)
 
-    if st.button("🔍 Analyze Test & Generate Focus Plan", use_container_width=True):
+        with col_diag1:
+            st.markdown("**📄 Test file or raw data**")
+            random_test_file = st.file_uploader(
+                f"Upload test or result ({UPLOAD_HINT})",
+                type=UPLOAD_TYPES,
+                key="random_test_up",
+            )
+            preview_if_image(random_test_file)
+            random_test_text = st.text_area(
+                "Or paste test content / scores",
+                height=200,
+                key="random_test_text",
+                placeholder=(
+                    "e.g., Question 1: Incorrect answer selected...\nQuestion 2:"
+                    " Correct...\nOr paste the raw quiz content here."
+                ),
+            )
+
+        with col_diag2:
+            st.markdown("**⚙️ Goal (optional)**")
+            user_context = st.text_area(
+                "Target exam / student goal",
+                height=270,
+                key="user_context",
+                placeholder=(
+                    "e.g., Preparing for the BPSC Computer Science test."
+                    " Target score is 80%+."
+                ),
+            )
+
+    if st.button("🔍 Analyze Test", type="primary", use_container_width=True):
         if not has_any_key:
             st.error(NO_KEY_MSG)
         else:
-            extracted_test = process_uploaded_file(random_test_file)  # photo ho toh abhi khali
+            extracted_test = process_uploaded_file(random_test_file)  # photos are read later with AI
             pasted_test = random_test_text.strip()
 
             if not (extracted_test or pasted_test or is_image(random_test_file)):
-                st.error(
-                    "⚠️ Please upload a test file (PDF, DOCX, TXT, photo) or paste"
-                    " text to analyze."
-                )
-            elif not allow_ai_call(using_own_key, units=1 + int(is_image(random_test_file))):
-                pass  # limit message allow_ai_call ne dikha diya
+                st.error("⚠️ Please upload a test file (PDF, DOCX, TXT or photo) or paste the text.")
+            elif not allow_ai_call(units=1 + int(is_image(random_test_file))):
+                pass  # allow_ai_call already showed the reason
             else:
-                with st.spinner(
-                    "Analyzing test data and designing personalized improvement"
-                    " plan..."
-                ):
+                with st.spinner("Analyzing the test and building your improvement plan..."):
                     try:
                         if is_image(random_test_file):
                             extracted_test = read_upload(random_test_file, llm_cfg)
@@ -1845,14 +2095,15 @@ with tab3:
                         show_error(e)
 
     if "diagnostic_analysis" in st.session_state:
-        st.divider()
-        st.subheader("📈 Diagnostic Report & Improvement Plan")
-        st.markdown(st.session_state["diagnostic_analysis"])
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        with st.container(border=True, key="card_7"):
+            st.markdown('<div class="section-title">📈 Diagnostic report and improvement plan</div>', unsafe_allow_html=True)
+            st.markdown(st.session_state["diagnostic_analysis"])
 
         col_rd1, col_rd2 = st.columns(2)
         with col_rd1:
             st.download_button(
-                "⬇️ Download Text Diagnostic (.txt)",
+                "⬇️ Download report (.txt)",
                 data=st.session_state["diagnostic_analysis"],
                 file_name="WSA_Test_Diagnostic.txt",
                 mime="text/plain",
@@ -1866,12 +2117,16 @@ with tab3:
             )
             if diag_pdf:
                 st.download_button(
-                    "⬇️ Download PDF Diagnostic (.pdf)",
+                    "⬇️ Download report (.pdf)",
                     data=diag_pdf,
                     file_name="WSA_Test_Diagnostic.pdf",
                     mime="application/pdf",
                     use_container_width=True,
                 )
+        st.markdown(
+            '<div class="ai-note">AI analysis is a guide, not a final judgement. Please use your own judgement too.</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================
