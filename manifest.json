@@ -1,15 +1,25 @@
 {
-  "name": "WSA Test Series & Paper Builder",
   "short_name": "WSA Paper Builder",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1e53c5",
+  "name": "WSA Test Series &amp; Paper Builder",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/2092/2092663.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "favicon_512.png",
+      "type": "image/png",
+      "sizes": "512x512"
     }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#484d84",
+  "description": "Create exam papers, check answer sheets, and test preparation",
+  "scope": "WSA Test Series &amp; Paper Builder",
+  "lang": "en",
+  "orientation": "any",
+  "categories": [
+    "books",
+    "education",
+    "magazines",
+    "social"
   ]
 }
