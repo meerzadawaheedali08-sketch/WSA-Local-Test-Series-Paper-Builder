@@ -1,8 +1,9 @@
-streamlit
+streamlit>=1.40
 python-dotenv
 openai
 python-docx
 pypdf
 reportlab
+pillow
 arabic-reshaper
 python-bidi
