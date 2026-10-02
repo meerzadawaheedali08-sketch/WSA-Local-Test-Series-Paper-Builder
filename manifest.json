@@ -11,15 +11,11 @@
   "start_url": "/",
   "display": "standalone",
   "theme_color": "#ffffff",
-  "background_color": "#484d84",
-  "description": "Create exam papers, check answer sheets, and test preparation",
-  "scope": "WSA Test Series &amp; Paper Builder",
+  "background_color": "#ffffff",
+  "id": "wsa-paper-builder",
+  "description": "Create exam papers for any class or competitive test, check answer sheets, and test preparation.",
+  "dir": "ltr",
+  "scope": "/",
   "lang": "en",
-  "orientation": "any",
-  "categories": [
-    "books",
-    "education",
-    "magazines",
-    "social"
-  ]
+  "orientation": "portrait"
 }
