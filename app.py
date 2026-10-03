@@ -188,7 +188,21 @@ def show_error(e):
 # ============================================================
 # CUSTOM CSS
 # ============================================================
+# ============================================================
+# PWA — Make app installable on mobile home screen
+# ============================================================
 
+st.markdown(
+    """
+    <link rel="manifest" href="/app/static/manifest.json">
+    <meta name="theme-color" content="#1E3A8A">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="WSA Papers">
+    <meta name="mobile-web-app-capable" content="yes">
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown(
     """
     <style>
