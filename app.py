@@ -1,7 +1,11 @@
 import os
 import re
+import io
+import json
+import base64
 import threading
 import time
+import html
 from datetime import date
 
 import docx
@@ -30,7 +34,7 @@ from reportlab.platypus import (
 )
 from reportlab.lib.fonts import addMapping
 
-# Urdu / Arabic script support in PDF (optional - the app still works without it)
+# Urdu / Arabic script support in PDF (optional)
 try:
     import arabic_reshaper
     from bidi.algorithm import get_display
@@ -49,11 +53,11 @@ st.set_page_config(
     page_title="WSA Educational Test Series & Paper Builder",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded",   # mobile par bhi sidebar khula rahe
+    initial_sidebar_state="expanded",
 )
 
 # ============================================================
-# LLM PROVIDERS CONFIG (all use OpenAI-compatible endpoints)
+# LLM PROVIDERS CONFIG
 # ============================================================
 
 PROVIDERS = {
@@ -88,9 +92,7 @@ def is_image(uploaded_file):
 
 
 def prepare_image_b64(uploaded_file, max_side=1800):
-    """Shrinks a photo and converts it to base64 (keeps it within API size limits)."""
-    import io
-    import base64
+    """Shrinks a photo and converts it to base64."""
     from PIL import Image, ImageOps
 
     img = Image.open(io.BytesIO(uploaded_file.getvalue()))
@@ -104,7 +106,7 @@ def prepare_image_b64(uploaded_file, max_side=1800):
 
 
 # ============================================================
-# SECRETS + SHARED-QUOTA PROTECTION
+# SECRETS + QUOTA PROTECTION
 # ============================================================
 
 
@@ -188,7 +190,7 @@ def show_error(e):
 
 
 # ============================================================
-# CUSTOM CSS (mobile-first, system fonts, sidebar-friendly)
+# CUSTOM CSS (system fonts, mobile-first, sidebar-friendly)
 # ============================================================
 
 st.markdown(
@@ -209,16 +211,12 @@ st.markdown(
         }
         .block-container { padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1180px; }
 
-        /* Hide only Streamlit menu + footer (sidebar is now visible) */
         #MainMenu, footer { visibility: hidden; }
 
         /* ---------- Sidebar ---------- */
         [data-testid="stSidebar"] {
             background: #F8FAFF;
             border-right: 1px solid #E2E8F0;
-        }
-        [data-testid="stSidebar"] .stRadio > label {
-            display: none;   /* hide the radio group label */
         }
         [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
             padding: 10px 12px;
@@ -278,13 +276,8 @@ st.markdown(
             border-radius: 12px;
             padding: 12px 24px;
             box-shadow: 0 6px 16px -6px rgba(37, 99, 235, 0.6);
-            transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
-        .stButton > button[kind="primary"]:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 10px 20px -8px rgba(37, 99, 235, 0.7);
-            color: #fff;
-        }
+        .stButton > button[kind="primary"]:hover { color: #fff; }
         .stDownloadButton > button, .stButton > button[kind="secondary"] {
             border-radius: 12px;
             border: 1px solid #C7D5F0;
@@ -321,17 +314,17 @@ st.markdown(
         .hadith-quote { font-size: 1.02rem; font-style: italic; font-weight: 500; color: #F1F5F9; line-height: 1.6; margin-bottom: 6px; }
         .hadith-ref { font-size: 0.82rem; color: #60A5FA; font-weight: 600; letter-spacing: 0.3px; margin-bottom: 16px; }
         .footer-divider { border: 0; border-top: 1px solid #334155; margin: 16px auto; width: 80%; }
-        .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; letter-spacing: 0.2px; }
+        .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; }
         .branding-tag { font-size: 0.82rem; color: #94A3B8; letter-spacing: 0.6px; text-transform: uppercase; }
 
-        /* ---------- Responsive tweaks ---------- */
+        /* ---------- Responsive ---------- */
         @media (max-width: 760px) {
             .block-container { padding-top: .65rem; padding-bottom: 1.2rem; }
             .hero { padding: 22px 18px; margin-bottom: 15px; border-radius: 17px; }
             .hero-label { font-size: .72rem; letter-spacing: .08em; }
             .hero-title { font-size: clamp(1.45rem, 6vw, 1.9rem); line-height: 1.16; }
             .hero-subtitle { font-size: .91rem; line-height: 1.55; }
-            .hero .chip { display: none; }   /* chips mobile par hide */
+            .hero .chip { display: none; }
             [data-testid="stVerticalBlockBorderWrapper"] { border-radius: 14px; }
             [data-testid="stMetric"] { padding: 10px 11px; }
             [data-testid="stMetricLabel"] { font-size: .76rem; }
@@ -342,8 +335,6 @@ st.markdown(
             .branding-card { padding: 22px 15px; margin-top: 26px; }
             .hadith-quote { font-size: .91rem; }
             .hadith-ref, .branding-tag { font-size: .73rem; line-height: 1.5; }
-
-            /* Sidebar on mobile */
             [data-testid="stSidebar"] {
                 width: 80vw !important;
                 min-width: 80vw !important;
@@ -366,7 +357,7 @@ st.markdown(
 
 
 # ============================================================
-# PDF FONT + URDU (RTL) HELPERS  —  LAZY LOADED
+# PDF FONTS (LAZY LOADED)
 # ============================================================
 
 
@@ -408,7 +399,6 @@ def register_pdf_fonts():
     return "Helvetica", "Helvetica-Bold", "Helvetica-Oblique"
 
 
-# Lazy-loaded fonts (mobile speed)
 _PDF_FONTS = None
 
 
@@ -449,7 +439,6 @@ def clean_text(text):
 
 
 def rich(text, style):
-    import html
     lines = clean_text(text).split("\n")
     body = "<br/>".join(html.escape(shape_text(ln), quote=False) for ln in lines)
     non_empty = [ln for ln in lines if ln.strip()]
@@ -459,7 +448,7 @@ def rich(text, style):
 
 
 # ============================================================
-# PROMPT + JSON PARSING FOR STRUCTURED PAPER
+# JSON SCHEMA + PARSING
 # ============================================================
 
 JSON_SCHEMA_TEXT = """{
@@ -525,7 +514,6 @@ def normalize_paper(obj, mcq_count, short_count, long_count):
 
 
 def parse_paper_json(raw, mcq_count, short_count, long_count):
-    import json
     txt = (raw or "").strip()
     txt = re.sub(r"^```(?:json)?", "", txt, flags=re.I).strip()
     txt = re.sub(r"```$", "", txt).strip()
@@ -737,10 +725,34 @@ def _header_flowables(meta, S, width, title_line, with_student_fields=True):
 
 
 def _section_bar(letter, title, marks, S, width):
-    bar = Table([[rich(f"SECTION {letter}  —  {title}", S["sec"]), rich(marks, S["secr"])]],
-                colWidths=[width * 0.65, width * 0.35])
+    bar = Table(
+        [[rich(f"SECTION {letter}  —  {title}", S["sec"]), rich(marks, S["secr"])]],
+        colWidths=[width * 0.65, width * 0.35],
+    )
     bar.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
         ("LINEBELOW", (0, 0), (-1, -1), 1.2, NAVY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    return bar
+
+
+def _question_row(num_label, text, S, width):
+    t = Table(
+        [[rich(num_label, S["qn"]), rich(text, S["q"])]],
+        colWidths=[13 * mm, width - 13 * mm],
+    )
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return t
+
+
+def _options_table(options, S, width):
+    indent, lab = 13 * mm, 8 * mm
+    use_two_cols = all(len(o) <= 38 and "\n
