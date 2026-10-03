@@ -132,9 +132,9 @@ if _gemini_override:
 SESSION_COOLDOWN_SEC = 15
 SESSION_MAX_CALLS = 20
 try:
-    DAILY_LIMIT = int(get_secret("DAILY_LIMIT") or 400)
+    DAILY_LIMIT = int(get_secret("DAILY_LIMIT") or 4000)
 except ValueError:
-    DAILY_LIMIT = 400
+    DAILY_LIMIT = 4000
 
 
 @st.cache_resource
@@ -222,7 +222,7 @@ st.markdown(
             3. Tap <b>"Install"</b> — the icon will appear on your home screen
         </div>
 
-        <div id="install-ios" style="display:none; font-size:0.9rem; line-height:1.7; opacity:0.98;">
+        <div id="install-banner" style="display:block; font-size:0.9rem; line-height:1.7; opacity:0.98;">
             <b>For iPhone (Safari):</b><br>
             1. Tap the <b>Share button (□↑)</b> at the bottom<br>
             2. Scroll down and tap <b>"Add to Home Screen"</b><br>
