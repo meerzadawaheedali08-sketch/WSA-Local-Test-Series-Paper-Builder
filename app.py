@@ -34,17 +34,15 @@ from reportlab.platypus import (
 )
 from reportlab.lib.fonts import addMapping
 
-# Urdu / Arabic script support in PDF (optional)
 try:
     import arabic_reshaper
     from bidi.algorithm import get_display
-
     RTL_OK = True
 except Exception:
     RTL_OK = False
 
 # ============================================================
-# LOAD ENVIRONMENT VARIABLES & PAGE CONFIG
+# PAGE CONFIG
 # ============================================================
 
 load_dotenv()
@@ -57,7 +55,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# LLM PROVIDERS CONFIG
+# LLM PROVIDERS
 # ============================================================
 
 PROVIDERS = {
@@ -92,9 +90,7 @@ def is_image(uploaded_file):
 
 
 def prepare_image_b64(uploaded_file, max_side=1800):
-    """Shrinks a photo and converts it to base64."""
     from PIL import Image, ImageOps
-
     img = Image.open(io.BytesIO(uploaded_file.getvalue()))
     img = ImageOps.exif_transpose(img)
     if img.mode != "RGB":
@@ -106,7 +102,7 @@ def prepare_image_b64(uploaded_file, max_side=1800):
 
 
 # ============================================================
-# SECRETS + QUOTA PROTECTION
+# SECRETS + QUOTA
 # ============================================================
 
 
@@ -190,7 +186,7 @@ def show_error(e):
 
 
 # ============================================================
-# CUSTOM CSS (system fonts, mobile-first, sidebar-friendly)
+# CUSTOM CSS
 # ============================================================
 
 st.markdown(
@@ -204,16 +200,13 @@ st.markdown(
             --muted: #64748B;
             --line: #E2E8F0;
         }
-
         .stApp {
             background: linear-gradient(180deg, #EAF0FB 0%, #F8FAFC 260px);
             font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
         }
         .block-container { padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1180px; }
-
         #MainMenu, footer { visibility: hidden; }
 
-        /* ---------- Sidebar ---------- */
         [data-testid="stSidebar"] {
             background: #F8FAFF;
             border-right: 1px solid #E2E8F0;
@@ -229,7 +222,6 @@ st.markdown(
             background: #E8EEF9;
         }
 
-        /* ---------- Hero ---------- */
         .hero {
             background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 55%, #38BDF8 120%);
             padding: 30px 34px;
@@ -252,7 +244,6 @@ st.markdown(
             margin: 0 8px 6px 0;
         }
 
-        /* ---------- Cards ---------- */
         div[class*="st-key-card"] {
             background: #FFFFFF;
             border: 1px solid var(--line) !important;
@@ -267,7 +258,6 @@ st.markdown(
         }
         [data-testid="stMetricValue"] { color: var(--navy); font-weight: 800; }
 
-        /* ---------- Buttons ---------- */
         .stButton > button[kind="primary"] {
             background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
             color: #fff;
@@ -290,7 +280,6 @@ st.markdown(
             color: var(--blue);
         }
 
-        /* ---------- Inputs ---------- */
         [data-testid="stFileUploaderDropzone"] {
             border-radius: 12px;
             border: 1.5px dashed #93B4F5;
@@ -300,7 +289,6 @@ st.markdown(
         .section-hint { font-size: 0.86rem; color: var(--muted); margin-bottom: 8px; }
         .ai-note { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 6px; }
 
-        /* ---------- Footer ---------- */
         .branding-card {
             background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
             color: #F8FAFC;
@@ -317,7 +305,6 @@ st.markdown(
         .branding-name { font-size: 1.1rem; font-weight: 700; color: #38BDF8; margin-bottom: 4px; }
         .branding-tag { font-size: 0.82rem; color: #94A3B8; letter-spacing: 0.6px; text-transform: uppercase; }
 
-        /* ---------- Responsive ---------- */
         @media (max-width: 760px) {
             .block-container { padding-top: .65rem; padding-bottom: 1.2rem; }
             .hero { padding: 22px 18px; margin-bottom: 15px; border-radius: 17px; }
@@ -335,10 +322,7 @@ st.markdown(
             .branding-card { padding: 22px 15px; margin-top: 26px; }
             .hadith-quote { font-size: .91rem; }
             .hadith-ref, .branding-tag { font-size: .73rem; line-height: 1.5; }
-            [data-testid="stSidebar"] {
-                width: 80vw !important;
-                min-width: 80vw !important;
-            }
+            [data-testid="stSidebar"] { width: 80vw !important; min-width: 80vw !important; }
             [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
                 padding: 13px 12px;
                 font-size: .95rem;
@@ -357,30 +341,22 @@ st.markdown(
 
 
 # ============================================================
-# PDF FONTS (LAZY LOADED)
+# PDF FONTS (LAZY)
 # ============================================================
 
 
 def register_pdf_fonts():
     candidates = [
-        (
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-            "C:/Windows/Fonts/ariali.ttf",
-            "C:/Windows/Fonts/arialbi.ttf",
-        ),
-        (
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
-        ),
-        (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
-        ),
+        ("C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf",
+         "C:/Windows/Fonts/ariali.ttf", "C:/Windows/Fonts/arialbi.ttf"),
+        ("/System/Library/Fonts/Supplemental/Arial.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf"),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf"),
     ]
     for reg, bold, ital, bi in candidates:
         if all(os.path.exists(p) for p in (reg, bold, ital, bi)):
@@ -410,9 +386,7 @@ def get_pdf_fonts():
 
 
 ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]")
-EMOJI_RE = re.compile(
-    "[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]"
-)
+EMOJI_RE = re.compile("[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]")
 
 
 def is_rtl_line(line):
@@ -454,7 +428,7 @@ def rich(text, style):
 JSON_SCHEMA_TEXT = """{
   "mcqs":  [ {"q": "question text", "options": ["option 1", "option 2", "option 3", "option 4"], "answer": "B"} ],
   "short": [ {"q": "question text", "answer": "model answer in 2-3 lines"} ],
-  "long":  [ {"q": "question text (use (a), (b), (c) parts on new lines if suitable)", "answer": "key points of model answer"} ]
+  "long":  [ {"q": "question text", "answer": "key points of model answer"} ]
 }"""
 
 
@@ -476,7 +450,6 @@ def normalize_paper(obj, mcq_count, short_count, long_count):
             cleaned.append(o)
         if not q or len(cleaned) < 2:
             continue
-
         ans = clean_text(item.get("answer", ""))
         letter = ""
         m = re.match(r"^\(?([A-Da-d])\)?(?:[\)\.:\s-]|$)", ans)
@@ -551,11 +524,9 @@ def section_list(data, meta):
 
 
 def compute_total_marks(data, meta):
-    return (
-        len(data["mcqs"]) * meta["mcq_marks"]
-        + len(data["short"]) * meta["short_marks"]
-        + len(data["long"]) * meta["long_marks"]
-    )
+    return (len(data["mcqs"]) * meta["mcq_marks"]
+            + len(data["short"]) * meta["short_marks"]
+            + len(data["long"]) * meta["long_marks"])
 
 
 def answer_key_lines(data, meta):
@@ -585,7 +556,6 @@ def paper_to_text(data, meta, include_key=True):
     ]
     L += [f"  {i}. {t}" for i, t in enumerate(INSTRUCTIONS, 1)]
     L.append("")
-
     for letter, title, marks, kind, items in section_list(data, meta):
         L.append(f"SECTION {letter} — {title}   ({marks})")
         L.append("-" * 64)
@@ -596,9 +566,7 @@ def paper_to_text(data, meta, include_key=True):
                     L.append(f"     ({LETTERS[j]}) {opt}")
             L.append("")
         L.append("")
-
     L.append("— End of Paper —")
-
     if include_key:
         L += ["", "=" * 64, "ANSWER KEY (Teacher Copy)", "=" * 64]
         L += answer_key_lines(data, meta)
@@ -608,7 +576,6 @@ def paper_to_text(data, meta, include_key=True):
 def paper_to_markdown(data, meta):
     def br(t):
         return t.replace("\n", "  \n")
-
     L = [
         f"## 🎓 {meta['institute']}",
         f"**{meta['category']}**",
@@ -641,10 +608,7 @@ def answer_key_markdown(data, meta):
             for i, it in enumerate(items, 1):
                 L.append(f"- **Q{i}:** {it['answer'] or '-'}".replace("\n", " "))
         L.append("")
-    return "\n".join(L)
-
-
-# ============================================================
+    return "\n".join(L)# ============================================================
 # PROFESSIONAL PDF
 # ============================================================
 
@@ -698,16 +662,16 @@ def _page_footer(canvas, doc):
 
 
 def _header_flowables(meta, S, width, title_line, with_student_fields=True):
-    fl = [
-        rich(meta["institute"].upper(), S["inst"]),
-        rich(title_line, S["exam"]),
-    ]
+    fl = [rich(meta["institute"].upper(), S["inst"]), rich(title_line, S["exam"])]
     rows = [
-        [rich("Subject / Topic:", S["cellb"]), rich(meta["topic"], S["cell"]), rich("Time Allowed:", S["cellb"]), rich(f"{meta['time_min']} Minutes", S["cell"])],
-        [rich("Exam:", S["cellb"]), rich(meta["category"], S["cell"]), rich("Total Marks:", S["cellb"]), rich(str(meta["total_marks"]), S["cell"])],
+        [rich("Subject / Topic:", S["cellb"]), rich(meta["topic"], S["cell"]),
+         rich("Time Allowed:", S["cellb"]), rich(f"{meta['time_min']} Minutes", S["cell"])],
+        [rich("Exam:", S["cellb"]), rich(meta["category"], S["cell"]),
+         rich("Total Marks:", S["cellb"]), rich(str(meta["total_marks"]), S["cell"])],
     ]
     if with_student_fields:
-        rows.append([rich("Student Name:", S["cellb"]), rich("", S["cell"]), rich("Roll No:", S["cellb"]), rich("", S["cell"])])
+        rows.append([rich("Student Name:", S["cellb"]), rich("", S["cell"]),
+                     rich("Roll No:", S["cellb"]), rich("", S["cell"])])
     cw = [36 * mm, width - 36 * mm - 32 * mm - 32 * mm, 32 * mm, 32 * mm]
     t = Table(rows, colWidths=cw)
     t.setStyle(TableStyle([
@@ -755,4 +719,1019 @@ def _question_row(num_label, text, S, width):
 
 def _options_table(options, S, width):
     indent, lab = 13 * mm, 8 * mm
-    use_two_cols = all(len(o) <= 38 and "\n
+    use_two_cols = all((len(o) <= 38 and "\n" not in o) for o in options)
+    if use_two_cols:
+        text_w = (width - indent - 2 * lab) / 2
+        rows = []
+        for i in range(0, len(options), 2):
+            row = ["", rich(f"({LETTERS[i]})", S["opt"]), rich(options[i], S["opt"])]
+            if i + 1 < len(options):
+                row += [rich(f"({LETTERS[i + 1]})", S["opt"]), rich(options[i + 1], S["opt"])]
+            else:
+                row += ["", ""]
+            rows.append(row)
+        t = Table(rows, colWidths=[indent, lab, text_w, lab, text_w])
+    else:
+        text_w = width - indent - lab
+        rows = [["", rich(f"({LETTERS[i]})", S["opt"]), rich(o, S["opt"])]
+                for i, o in enumerate(options)]
+        t = Table(rows, colWidths=[indent, lab, text_w])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+    ]))
+    return t
+
+
+def _options_answer(answer, S, width):
+    t = Table([["", rich("Ans: " + (answer or "-"), S["small"])]],
+              colWidths=[13 * mm, width - 13 * mm])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return t
+
+
+def _brand_footer(S):
+    return [
+        Spacer(1, 14),
+        rich("— End of Paper —", S["center"]),
+        Spacer(1, 10),
+        rich('"Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."', S["hadith"]),
+        rich("— Prophet Muhammad (PBUH) | Sahih Muslim, Book 35, Hadith 6518", S["hadithref"]),
+    ]
+
+
+def build_paper_pdf(data, meta, mode="paper"):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=20 * mm,
+        title=f"{meta['topic']} - {'Answer Key' if mode == 'key' else 'Question Paper'}",
+        author="WSA Educational Test Series",
+    )
+    width = A4[0] - 36 * mm
+    S = pdf_styles()
+    story = []
+
+    if mode == "paper":
+        story += _header_flowables(meta, S, width, meta["category"])
+        inst = Table(
+            [[rich("Instructions:  " + "  ".join(f"{i}) {t}" for i, t in enumerate(INSTRUCTIONS, 1)), S["small"])]],
+            colWidths=[width],
+        )
+        inst.setStyle(TableStyle([
+            ("BOX", (0, 0), (-1, -1), 0.5, GRID),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story += [inst, Spacer(1, 10)]
+        for letter, title, marks, kind, items in section_list(data, meta):
+            story.append(_section_bar(letter, title, marks, S, width))
+            story.append(Spacer(1, 7))
+            for i, it in enumerate(items, 1):
+                block = [_question_row(f"Q{i}.", it["q"], S, width)]
+                if kind == "mcq":
+                    block.append(_options_table(it["options"], S, width))
+                    block.append(Spacer(1, 7))
+                else:
+                    block.append(Spacer(1, 10 if kind == "short" else 16))
+                story.append(KeepTogether(block))
+            story.append(Spacer(1, 6))
+        story += _brand_footer(S)
+    else:
+        story += _header_flowables(meta, S, width, "ANSWER KEY (Teacher Copy)", with_student_fields=False)
+        for letter, title, marks, kind, items in section_list(data, meta):
+            story.append(_section_bar(letter, title, marks, S, width))
+            story.append(Spacer(1, 7))
+            if kind == "mcq":
+                per_row = 5
+                cells = [rich(f"Q{i}:  {it['answer']}", S["cellb"]) for i, it in enumerate(items, 1)]
+                while len(cells) % per_row:
+                    cells.append("")
+                rows = [cells[i:i + per_row] for i in range(0, len(cells), per_row)]
+                t = Table(rows, colWidths=[width / per_row] * per_row)
+                t.setStyle(TableStyle([
+                    ("BOX", (0, 0), (-1, -1), 0.5, GRID),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.3, GRID),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]))
+                story += [t, Spacer(1, 10)]
+            else:
+                for i, it in enumerate(items, 1):
+                    story.append(KeepTogether([
+                        _question_row(f"Q{i}.", it["q"], S, width),
+                        _options_answer(it["answer"], S, width),
+                        Spacer(1, 6),
+                    ]))
+        story.append(Spacer(1, 8))
+
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    buffer.seek(0)
+    return buffer
+
+
+# ============================================================
+# WORD DOCX
+# ============================================================
+
+
+def build_paper_docx(data, meta):
+    d = docx.Document()
+    for s in d.sections:
+        s.left_margin = s.right_margin = Cm(2)
+        s.top_margin = s.bottom_margin = Cm(1.8)
+    normal = d.styles["Normal"]
+    normal.font.name = "Calibri"
+    normal.font.size = Pt(11)
+
+    def add_text(par, text, bold=False, size=None, color=None):
+        parts = clean_text(text).split("\n")
+        for idx, part in enumerate(parts):
+            run = par.add_run(part)
+            run.bold = bold
+            if size:
+                run.font.size = Pt(size)
+            if color:
+                run.font.color.rgb = RGBColor.from_string(color)
+            if idx < len(parts) - 1:
+                run.add_break()
+
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(p, meta["institute"].upper(), bold=True, size=17, color="1E3A8A")
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(p, meta["category"], bold=True, size=12, color="334155")
+
+    t = d.add_table(rows=3, cols=4)
+    t.style = "Table Grid"
+    info = [
+        ("Subject / Topic:", meta["topic"], "Time Allowed:", f"{meta['time_min']} Minutes"),
+        ("Exam:", meta["category"], "Total Marks:", str(meta["total_marks"])),
+        ("Student Name:", "", "Roll No:", ""),
+    ]
+    for r, row in enumerate(info):
+        for c, val in enumerate(row):
+            cell = t.cell(r, c)
+            cell.text = ""
+            add_text(cell.paragraphs[0], val, bold=(c % 2 == 0), size=10)
+
+    p = d.add_paragraph()
+    add_text(p, "Instructions: " + "  ".join(f"{i}) {x}" for i, x in enumerate(INSTRUCTIONS, 1)), size=9)
+
+    for letter, title, marks, kind, items in section_list(data, meta):
+        p = d.add_paragraph()
+        p.paragraph_format.space_before = Pt(10)
+        add_text(p, f"SECTION {letter} — {title}      ({marks})", bold=True, size=12, color="1E3A8A")
+        for i, it in enumerate(items, 1):
+            p = d.add_paragraph()
+            p.paragraph_format.space_before = Pt(6)
+            p.paragraph_format.space_after = Pt(1)
+            add_text(p, f"Q{i}.  ", bold=True)
+            add_text(p, it["q"])
+            if kind == "mcq":
+                for j, opt in enumerate(it["options"]):
+                    op = d.add_paragraph()
+                    op.paragraph_format.left_indent = Cm(1.2)
+                    op.paragraph_format.space_after = Pt(0)
+                    add_text(op, f"({LETTERS[j]})  {opt}")
+            elif kind == "long":
+                d.add_paragraph()
+
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(14)
+    add_text(p, "— End of Paper —", size=9, color="64748B")
+    p = d.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    add_text(p, "Designed by Waheed Ali Hamouzai • WSA Educational Community", size=8, color="64748B")
+
+    buf = io.BytesIO()
+    d.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# ============================================================
+# SIMPLE TEXT -> PDF
+# ============================================================
+
+
+def create_pdf_from_text(title, content):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40,
+                            topMargin=40, bottomMargin=45)
+    S = pdf_styles()
+    body_style = ParagraphStyle("BodyStyle", parent=S["q"], fontSize=10, leading=14, spaceAfter=6)
+    head_style = ParagraphStyle("HeadStyle", parent=S["q"], fontName=S["q"].fontName,
+                                fontSize=11.5, leading=15, textColor=NAVY, spaceBefore=8, spaceAfter=4)
+    title_style = ParagraphStyle("TitleStyle", parent=S["inst"], fontSize=18, spaceAfter=12)
+
+    story = [
+        rich("Generated via WSA Educational Test Series & Paper Builder (AI-Powered)", S["center"]),
+        Spacer(1, 6),
+        rich(title, title_style),
+        Spacer(1, 6),
+    ]
+    for line in content.split("\n"):
+        line = EMOJI_RE.sub("", line).rstrip()
+        if not line.strip():
+            story.append(Spacer(1, 5))
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#") or (stripped.startswith("**") and stripped.endswith("**") and len(stripped) < 90):
+            story.append(rich(stripped.lstrip("#").strip(), head_style))
+        elif set(stripped) <= set("-=_ "):
+            continue
+        else:
+            story.append(rich(stripped, body_style))
+
+    story += [Spacer(1, 12)] + _brand_footer(S)[2:]
+    story.append(rich("Designed by Waheed Ali Hamouzai • WSA Educational Community", S["center"]))
+    doc.build(story, onFirstPage=_page_footer, onLaterPages=_page_footer)
+    buffer.seek(0)
+    return buffer
+
+
+# ============================================================
+# FILE EXTRACTION
+# ============================================================
+
+
+def process_uploaded_file(uploaded_file):
+    if uploaded_file is None:
+        return ""
+    filename = uploaded_file.name.lower()
+    if filename.endswith(".txt"):
+        try:
+            return uploaded_file.getvalue().decode("utf-8").strip()
+        except Exception:
+            return ""
+    elif filename.endswith(".docx"):
+        try:
+            document = docx.Document(uploaded_file)
+            full_text = [p.text for p in document.paragraphs if p.text]
+            return "\n".join(full_text).strip()
+        except Exception:
+            return ""
+    elif filename.endswith(".pdf"):
+        text = ""
+        try:
+            reader = pypdf.PdfReader(uploaded_file)
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+            text = text.strip()
+        except Exception:
+            text = ""
+        return text[:MAX_REFERENCE_CHARS]
+    return ""
+
+
+# ============================================================
+# UNIVERSAL LLM CALL
+# ============================================================
+
+
+def call_llm(llm_cfg, prompt_text, system_instruction="You are an expert educational examiner.",
+             temperature=0.3, json_mode=False, image_b64=None):
+    keys = llm_cfg["keys"]
+    provider_choice = llm_cfg["provider"]
+    custom_model = (llm_cfg.get("custom_model") or "").strip()
+
+    if provider_choice == AUTO_MODE:
+        provider_order = [p for p in AUTO_ORDER if keys.get(p)]
+    else:
+        provider_order = [provider_choice] if keys.get(provider_choice) else []
+
+    if image_b64:
+        provider_order = [p for p in provider_order if PROVIDERS[p]["vision_models"]]
+
+    if not provider_order:
+        raise Exception("No AI key is configured on the server"
+                        + (" for reading photos (a Groq or Gemini key is needed)." if image_b64 else "."))
+
+    errors = []
+    for provider in provider_order:
+        cfg = PROVIDERS[provider]
+        client = OpenAI(api_key=keys[provider], base_url=cfg["base_url"], timeout=90)
+
+        if image_b64:
+            models_to_try = cfg["vision_models"]
+        elif custom_model and provider_choice == provider:
+            models_to_try = [custom_model]
+        else:
+            models_to_try = cfg["models"]
+
+        for model_name in models_to_try:
+            if image_b64:
+                messages = [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": system_instruction + "\n\n" + prompt_text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                    ],
+                }]
+            else:
+                messages = [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt_text},
+                ]
+            use_json = json_mode and not image_b64
+            attempts = [{"response_format": {"type": "json_object"}}, {}] if use_json else [{}]
+            for extra in attempts:
+                try:
+                    response = client.chat.completions.create(
+                        model=model_name, messages=messages, temperature=temperature, **extra,
+                    )
+                    text = response.choices[0].message.content or ""
+                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+                    if text:
+                        return text
+                    errors.append(f"{provider}/{model_name}: empty response")
+                except Exception as e:
+                    err = str(e)
+                    if keys.get(provider):
+                        err = err.replace(keys[provider], "***")
+                    errors.append(f"{provider}/{model_name}: {err[:160]}")
+                    continue
+
+    raise Exception("All AI providers failed:\n- " + "\n- ".join(errors))
+
+
+# ============================================================
+# IMAGE -> TEXT
+# ============================================================
+
+
+def extract_text_from_image(llm_cfg, uploaded_file):
+    image_b64 = prepare_image_b64(uploaded_file)
+    text = call_llm(
+        llm_cfg,
+        prompt_text=(
+            "Transcribe ALL text visible in this image exactly as written (English"
+            " and Urdu, printed or handwritten). Keep question numbers, options,"
+            " marks, ticks/circled answers and the original line order. Do not"
+            " explain, summarise or add anything. If nothing readable is present,"
+            " reply with exactly: UNREADABLE"
+        ),
+        system_instruction="You are a precise OCR engine for exam papers and answer sheets.",
+        temperature=0.0,
+        image_b64=image_b64,
+    )
+    if "UNREADABLE" in text.upper() and len(text) < 40:
+        raise Exception(USER_MESSAGE_PREFIX + "Could not read any text from the photo. "
+                        "Please upload a clear, well-lit and straight photo.")
+    return text
+
+
+def read_upload(uploaded_file, llm_cfg):
+    if is_image(uploaded_file):
+        return extract_text_from_image(llm_cfg, uploaded_file)
+    return process_uploaded_file(uploaded_file)
+
+
+def preview_if_image(uploaded_file):
+    if is_image(uploaded_file):
+        st.image(uploaded_file, width=260)
+
+
+# ============================================================
+# AI GENERATION & EVALUATION
+# ============================================================
+
+
+def generate_test_paper(llm_cfg, topic, uploaded_pdf, test_type, language,
+                        mcq_count, short_count, long_count, diff_level, level_note=""):
+    pdf_text = read_upload(uploaded_pdf, llm_cfg)[:MAX_REFERENCE_CHARS]
+
+    if language == "Urdu":
+        language_instruction = "Write EVERYTHING (questions, options, answers) strictly in URDU language."
+    elif language == "Bilingual (English + Urdu)":
+        language_instruction = (
+            "BILINGUAL: every question is written in English, then a new line"
+            " (\\n), then its Urdu translation. Every option is written as"
+            " 'English text / اردو ترجمہ' on ONE line. Answers may be in English."
+        )
+    else:
+        language_instruction = "Write everything in ENGLISH language."
+
+    reference_block = f"REFERENCE TEXT (base the questions on this):\n{pdf_text}" if pdf_text else ""
+
+    prompt = f"""
+Create a professional examination paper as a JSON object.
+
+EXAM CATEGORY / STYLE: {test_type}
+TOPIC / SUBJECT: {topic}
+DIFFICULTY LEVEL: {diff_level}
+LEARNER LEVEL: {level_note or "General audience"}
+LANGUAGE: {language}
+{language_instruction}
+
+EXACT QUESTION COUNTS:
+- mcqs: {mcq_count}
+- short: {short_count}
+- long: {long_count}
+(If a count is 0, return an empty list for it.)
+
+QUALITY RULES:
+1. Every MCQ has EXACTLY 4 options in the "options" list, WITHOUT letter prefixes.
+   The "answer" is only the letter: "A", "B", "C" or "D".
+2. Only ONE option is correct; other three must be plausible distractors.
+3. Spread correct answers evenly across A, B, C and D.
+4. No repeated or near-duplicate questions.
+5. Order questions from easier to harder within each section.
+6. Short questions need a 2-3 line answer; long questions are descriptive.
+7. Do not use markdown (no ** or #) inside any text.
+
+Return ONLY a valid JSON object in exactly this structure:
+{JSON_SCHEMA_TEXT}
+
+{reference_block}
+"""
+
+    system = ("You are a senior paper-setter for educational boards and competitive"
+              " testing services (NTS, PPSC, FPSC, school boards). You output ONLY"
+              " valid JSON, never prose.")
+
+    last_error = None
+    for attempt in range(2):
+        raw = call_llm(
+            llm_cfg,
+            prompt_text=prompt if attempt == 0 else prompt + "\nIMPORTANT: your previous reply was not valid JSON. Reply with JSON ONLY.",
+            system_instruction=system,
+            temperature=0.3,
+            json_mode=True,
+        )
+        try:
+            data = parse_paper_json(raw, mcq_count, short_count, long_count)
+            if data["mcqs"] or data["short"] or data["long"]:
+                return data
+            last_error = "the AI returned no questions"
+        except Exception as e:
+            last_error = str(e)
+
+    raise Exception(USER_MESSAGE_PREFIX + "The AI did not return the paper in the expected format"
+                    f" ({last_error}). Please click Generate again.")
+
+
+def evaluate_student_answers(llm_cfg, paper_text, answers_text):
+    prompt = f"""
+Evaluate the student's answer sheet against the provided question paper and answer key.
+
+QUESTION PAPER / ANSWER KEY:
+{paper_text}
+
+STUDENT ANSWERS:
+{answers_text}
+
+Provide a structured evaluation report:
+- Total Marks & Obtained Marks
+- Percentage & Grade
+- Question-wise Analysis
+- Strengths & Weaknesses
+"""
+    return call_llm(
+        llm_cfg,
+        prompt_text=prompt,
+        system_instruction="You are an experienced examiner evaluating student answers accurately and providing constructive feedback.",
+        temperature=0.2,
+    )
+
+
+def analyze_random_test(llm_cfg, test_content, additional_context=""):
+    context = additional_context if additional_context else "General test analysis and performance diagnostic."
+    prompt = f"""
+Analyze the following random test paper, solved sheet, or test result provided by the user.
+
+USER CONTEXT / GOAL:
+{context}
+
+TEST DATA / CONTENT:
+{test_content}
+
+Provide a comprehensive Diagnostic & Improvement Report structured as follows:
+1. 📌 Executive Performance Overview
+2. 🎯 Key Weaknesses & Knowledge Gaps
+3. 🔍 Priority Focus Areas
+4. 🚀 Actionable Improvement Strategy
+5. 💡 Recommended Resources & Next Steps
+"""
+    return call_llm(
+        llm_cfg,
+        prompt_text=prompt,
+        system_instruction="You are a senior academic mentor and diagnostic expert specializing in test analysis and student performance optimization.",
+        temperature=0.3,
+    )
+
+
+def safe_download_data(builder, *args, **kwargs):
+    try:
+        return builder(*args, **kwargs)
+    except Exception as e:
+        st.warning("Could not create this file. Please try again.")
+        print("File build error:", e)
+        return None
+
+
+# ============================================================
+# EXAM CATEGORIES
+# ============================================================
+
+EXAM_GROUPS = {
+    "School (Class 1–10)": [f"Class {i}" for i in range(1, 11)],
+    "College (Class 11–12)": ["Class 11 (FA / FSc / ICS)", "Class 12 (FA / FSc / ICS)"],
+    "University": ["Bachelor (BS / BA / BSc)", "Master (MS / MA / MSc)"],
+    "Competitive Tests": ["General Test (NTS / CTSP / SBK)", "PPSC / FPSC", "BPSC", "CSS", "CS / IT Screening Test"],
+    "Custom": ["Custom Mock Test"],
+}
+
+OTHER_SUBJECT = "Other (type below)"
+DIFF_LABELS = {1: "Very Easy", 2: "Easy", 3: "Medium", 4: "Hard", 5: "Very Hard"}
+LANGUAGES = ["English", "Urdu", "Bilingual (English + Urdu)"]
+
+COMPETITIVE_DEFAULTS = {
+    "General Test (NTS / CTSP / SBK)": (3, 60),
+    "PPSC / FPSC": (4, 90),
+    "BPSC": (4, 90),
+    "CSS": (5, 120),
+    "CS / IT Screening Test": (4, 60),
+}
+
+
+def subjects_for(group, level):
+    if group == "School (Class 1–10)":
+        n = int(re.search(r"\d+", level).group())
+        if n <= 2:
+            base = ["English", "Urdu", "Mathematics", "General Knowledge", "Islamiyat"]
+        elif n <= 5:
+            base = ["English", "Urdu", "Mathematics", "General Science", "Social Studies", "Islamiyat", "Computer"]
+        elif n <= 8:
+            base = ["English", "Urdu", "Mathematics", "General Science", "Social Studies", "Islamiyat",
+                    "Computer Science", "Geography", "History"]
+        else:
+            base = ["English", "Urdu", "Mathematics", "Physics", "Chemistry", "Biology",
+                    "Computer Science", "Pakistan Studies", "Islamiyat", "General Science"]
+    elif group == "College (Class 11–12)":
+        base = ["Physics", "Chemistry", "Biology", "Mathematics", "Computer Science",
+                "English", "Urdu", "Pakistan Studies", "Islamiyat", "Statistics", "Economics", "Accounting"]
+    elif group == "University":
+        base = ["Computer Science", "Information Technology", "Software Engineering",
+                "Mathematics", "Physics", "Chemistry", "Biology", "English",
+                "Business Administration", "Economics", "Education"]
+    elif group == "Competitive Tests":
+        base = ["General Knowledge", "English", "Urdu", "Pakistan Studies", "Islamic Studies",
+                "Current Affairs", "Everyday Science", "Quantitative / Mathematics",
+                "Analytical Reasoning / IQ", "Computer Science / IT"]
+    else:
+        base = ["General"]
+    return base + [OTHER_SUBJECT]
+
+
+def level_profile(group, level):
+    curriculum = "Follow the Pakistani national curriculum / textbook board syllabus."
+    if group == "School (Class 1–10)":
+        n = int(re.search(r"\d+", level).group())
+        if n <= 2:
+            diff, time_min = 1, 30
+            band = "Use very simple words and very short sentences. Keep every question basic and use everyday examples."
+        elif n <= 5:
+            diff, time_min = (1 if n == 3 else 2), 45
+            band = "Use simple words and short sentences. Questions must suit primary-level learners."
+        elif n <= 8:
+            diff, time_min = (2 if n < 8 else 3), 60
+            band = "Use clear, simple language suitable for middle-level students."
+        else:
+            diff, time_min = 3, 90
+            band = "Match the Secondary School Certificate (SSC / Matric) exam standard."
+        note = f"Class {n} students (about {n + 5}-{n + 6} years old). {band} {curriculum}"
+    elif group == "College (Class 11–12)":
+        is_12 = level.startswith("Class 12")
+        diff, time_min = (4, 120) if is_12 else (3, 90)
+        note = f"{level} students. Match the Intermediate (HSSC) exam standard. {curriculum}"
+    elif group == "University":
+        diff, time_min = 4, 120
+        note = f"University students ({level}). Use university-level terminology and conceptual depth."
+    elif group == "Competitive Tests":
+        diff, time_min = COMPETITIVE_DEFAULTS.get(level, (3, 60))
+        note = f"Candidates preparing for {level} in Pakistan. Match the style and standard of such recruitment / screening tests."
+    else:
+        diff, time_min, note = 3, 60, ""
+    return {"difficulty": diff, "time_min": time_min, "note": note}
+
+
+def apply_level_defaults():
+    ss = st.session_state
+    prof = level_profile(ss["exam_group"], ss["exam_level"])
+    ss["difficulty"] = prof["difficulty"]
+    ss["time_min"] = prof["time_min"]
+    ss["subject"] = subjects_for(ss["exam_group"], ss["exam_level"])[0]
+
+
+def on_group_change():
+    st.session_state["exam_level"] = EXAM_GROUPS[st.session_state["exam_group"]][0]
+    apply_level_defaults()
+
+
+def on_level_change():
+    apply_level_defaults()
+
+
+def use_generated_paper():
+    st.session_state["q_paper_text"] = st.session_state.get("generated_paper", "")
+
+
+_first_group = list(EXAM_GROUPS)[0]
+_defaults = {
+    "exam_group": _first_group,
+    "exam_level": EXAM_GROUPS[_first_group][0],
+    "chapter": "",
+    "subject_other": "",
+    "language": "English",
+    "mcq_count": 10,
+    "short_count": 5,
+    "long_count": 2,
+    "institute": "WSA Educational Community",
+    "mcq_marks": 1,
+    "short_marks": 2,
+    "long_marks": 5,
+    "q_paper_text": "",
+}
+for _k, _v in _defaults.items():
+    st.session_state.setdefault(_k, _v)
+if "difficulty" not in st.session_state:
+    apply_level_defaults()
+
+
+# ============================================================
+# AI KEYS + HEADER
+# ============================================================
+
+llm_cfg = {
+    "keys": {name: get_secret(cfg["env"]) for name, cfg in PROVIDERS.items()},
+    "provider": AUTO_MODE,
+    "custom_model": "",
+}
+has_any_key = any(llm_cfg["keys"].values())
+
+NO_KEY_MSG = "⚠️ The AI service is not configured yet. Please contact the administrator."
+
+st.markdown(
+    """<div class="hero">
+<div class="hero-label">🎓 WSA Educational Community</div>
+<div class="hero-title">Test Series & Paper Builder</div>
+<div class="hero-subtitle">Create exam papers for any class or competitive test, check answer sheets, and find weak areas in minutes.</div>
+<span class="chip">English · Urdu · Bilingual</span>
+<span class="chip">PDF & Word export</span>
+<span class="chip">Answer key included</span>
+<span class="chip">Photo upload</span>
+</div>""",
+    unsafe_allow_html=True,
+)
+
+if not has_any_key:
+    st.error(NO_KEY_MSG)
+    st.caption("Administrator: add GROQ_API_KEY (and optionally GEMINI_API_KEY) in the app secrets.")
+
+
+# ============================================================
+# SIDEBAR NAVIGATION
+# ============================================================
+
+with st.sidebar:
+    st.markdown("### 🎓 WSA Test Series")
+    st.caption("Choose a tool")
+    page = st.radio(
+        "Navigation",
+        ["📝 Create Paper", "📊 Check Answers", "🎯 Test Diagnostic"],
+        label_visibility="collapsed",
+        key="nav_page",
+    )
+    st.divider()
+    st.caption("English · Urdu · Bilingual")
+    st.caption("PDF & Word export")
+
+
+# ============================================================
+# PAGE 1 — CREATE PAPER
+# ============================================================
+
+if page == "📝 Create Paper":
+    with st.container(border=True, key="card_1"):
+        st.markdown('<div class="section-title">1. Class and subject</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-hint">Pick the class or test. Difficulty and time are set for you.</div>', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.selectbox("Category", list(EXAM_GROUPS), key="exam_group", on_change=on_group_change)
+        with c2:
+            st.selectbox("Class / Test", EXAM_GROUPS[st.session_state["exam_group"]],
+                         key="exam_level", on_change=on_level_change)
+        with c3:
+            st.selectbox("Subject",
+                         subjects_for(st.session_state["exam_group"], st.session_state["exam_level"]),
+                         key="subject")
+
+        if st.session_state["subject"] == OTHER_SUBJECT:
+            st.text_input("Subject name", key="subject_other", placeholder="e.g., Home Economics")
+
+        t1, t2, t3 = st.columns([2, 1, 1])
+        with t1:
+            st.text_input("Chapter / Topic (optional)", key="chapter",
+                          placeholder="e.g., Chapter 3 — Force and Motion")
+        with t2:
+            st.selectbox("Language", LANGUAGES, key="language")
+        with t3:
+            st.slider("Difficulty", 1, 5, key="difficulty")
+        st.caption(f"Difficulty: **{DIFF_LABELS[st.session_state['difficulty']]}** "
+                   f"(set automatically for {st.session_state['exam_level']}, you can change it).")
+
+    with st.container(border=True, key="card_2"):
+        st.markdown('<div class="section-title">2. Questions</div>', unsafe_allow_html=True)
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            st.number_input("Number of MCQs", 0, 50, key="mcq_count")
+        with q2:
+            st.number_input("Number of Short Questions", 0, 20, key="short_count")
+        with q3:
+            st.number_input("Number of Long Questions", 0, 10, key="long_count")
+
+        uploaded_pdf = st.file_uploader(
+            f"Reference material (optional) — {UPLOAD_HINT}",
+            type=UPLOAD_TYPES,
+            help="Upload a chapter, notes or a textbook page photo and questions will be based on it.",
+        )
+        preview_if_image(uploaded_pdf)
+
+        with st.expander("🏫 Paper header, marks and time (optional)"):
+            h1, h2 = st.columns(2)
+            with h1:
+                st.text_input("Institute / Academy name", key="institute")
+                st.number_input("Time allowed (minutes)", 5, 300, key="time_min", step=5)
+            with h2:
+                st.number_input("Marks per MCQ", 1, 10, key="mcq_marks")
+                st.number_input("Marks per Short Question", 1, 20, key="short_marks")
+                st.number_input("Marks per Long Question", 1, 50, key="long_marks")
+
+    ss = st.session_state
+    subject_name = ss["subject_other"].strip() if ss["subject"] == OTHER_SUBJECT else ss["subject"]
+    topic_text = subject_name + (f" — {ss['chapter'].strip()}" if ss["chapter"].strip() else "")
+
+    if st.button("🚀 Generate Test Paper", type="primary", use_container_width=True):
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
+        elif not subject_name:
+            st.error("⚠️ Please enter the subject name.")
+        elif ss["mcq_count"] + ss["short_count"] + ss["long_count"] == 0:
+            st.error("⚠️ Please ask for at least one question.")
+        elif not allow_ai_call(units=1 + int(is_image(uploaded_pdf))):
+            pass
+        else:
+            profile = level_profile(ss["exam_group"], ss["exam_level"])
+            with st.spinner("Creating your test paper... this takes a few seconds."):
+                try:
+                    paper = generate_test_paper(
+                        llm_cfg, topic_text, uploaded_pdf, ss["exam_level"], ss["language"],
+                        ss["mcq_count"], ss["short_count"], ss["long_count"],
+                        DIFF_LABELS[ss["difficulty"]], profile["note"],
+                    )
+                    meta = {
+                        "institute": ss["institute"].strip() or "WSA Educational Community",
+                        "category": ss["exam_level"],
+                        "topic": topic_text,
+                        "language": ss["language"],
+                        "time_min": int(ss["time_min"]),
+                        "mcq_marks": int(ss["mcq_marks"]),
+                        "short_marks": int(ss["short_marks"]),
+                        "long_marks": int(ss["long_marks"]),
+                    }
+                    meta["total_marks"] = compute_total_marks(paper, meta)
+
+                    ss["paper_data"] = paper
+                    ss["paper_meta"] = meta
+                    ss["generated_paper"] = paper_to_text(paper, meta, include_key=True)
+
+                    got = (len(paper["mcqs"]), len(paper["short"]), len(paper["long"]))
+                    want = (ss["mcq_count"], ss["short_count"], ss["long_count"])
+                    if got != want:
+                        st.warning(f"The AI created {got[0]} MCQs, {got[1]} short and {got[2]} long"
+                                   f" questions, but you asked for {want[0]}, {want[1]} and {want[2]}.")
+                except Exception as e:
+                    show_error(e)
+
+    if "paper_data" in st.session_state:
+        paper = st.session_state["paper_data"]
+        meta = st.session_state["paper_meta"]
+
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total marks", meta["total_marks"])
+        m2.metric("Time", f"{meta['time_min']} min")
+        m3.metric("MCQs", len(paper["mcqs"]))
+        m4.metric("Short / Long", f"{len(paper['short'])} / {len(paper['long'])}")
+
+        with st.container(border=True, key="card_3"):
+            st.markdown(paper_to_markdown(paper, meta))
+
+        with st.expander("🔑 Answer key (teacher copy)"):
+            st.markdown(answer_key_markdown(paper, meta))
+
+        st.markdown('<div class="section-title">Download</div>', unsafe_allow_html=True)
+        d1, d2 = st.columns(2)
+        d3, d4 = st.columns(2)
+
+        paper_pdf = safe_download_data(build_paper_pdf, paper, meta, "paper")
+        key_pdf = safe_download_data(build_paper_pdf, paper, meta, "key")
+        word_file = safe_download_data(build_paper_docx, paper, meta)
+
+        with d1:
+            if paper_pdf:
+                st.download_button("⬇️ Question Paper (PDF)", data=paper_pdf,
+                                   file_name="WSA_Question_Paper.pdf", mime="application/pdf",
+                                   use_container_width=True)
+        with d2:
+            if key_pdf:
+                st.download_button("🔑 Answer Key (PDF)", data=key_pdf,
+                                   file_name="WSA_Answer_Key.pdf", mime="application/pdf",
+                                   use_container_width=True)
+        with d3:
+            if word_file:
+                st.download_button("📝 Question Paper (Word)", data=word_file,
+                                   file_name="WSA_Question_Paper.docx",
+                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                   use_container_width=True)
+        with d4:
+            st.download_button("⬇️ Paper + Key (Text)", data=st.session_state["generated_paper"],
+                               file_name="WSA_Test_Paper.txt", mime="text/plain",
+                               use_container_width=True)
+
+        if meta["language"] != "English":
+            st.info("Tip: For Urdu or Bilingual papers, the Word (.docx) file is the most reliable option.")
+        st.markdown('<div class="ai-note">AI-generated content can contain mistakes. Please review the paper before using it.</div>',
+                    unsafe_allow_html=True)
+
+
+# ============================================================
+# PAGE 2 — CHECK ANSWERS
+# ============================================================
+
+elif page == "📊 Check Answers":
+    with st.container(border=True, key="card_4"):
+        st.markdown('<div class="section-title">Check student answers</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-hint">Add the question paper (with answer key) and the student\'s answer sheet. Upload a file, a photo, or paste text.</div>',
+                    unsafe_allow_html=True)
+
+        col_paper, col_answer = st.columns(2)
+        with col_paper:
+            st.markdown("**1️⃣ Question paper / answer key**")
+            paper_file = st.file_uploader(f"Upload paper ({UPLOAD_HINT})", type=UPLOAD_TYPES, key="p_up")
+            preview_if_image(paper_file)
+            if st.session_state.get("generated_paper"):
+                st.button("📄 Use the paper I just created", on_click=use_generated_paper, use_container_width=True)
+            question_paper_text = st.text_area("Or paste text", height=200, key="q_paper_text")
+
+        with col_answer:
+            st.markdown("**2️⃣ Student answer sheet**")
+            student_file = st.file_uploader(f"Upload answers ({UPLOAD_HINT})", type=UPLOAD_TYPES, key="s_up")
+            preview_if_image(student_file)
+            student_answers_text = st.text_area("Or paste text", height=200, key="s_answers_text")
+
+    if st.button("📊 Check Answers", type="primary", use_container_width=True):
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
+        else:
+            p_text = process_uploaded_file(paper_file)
+            a_text = process_uploaded_file(student_file)
+            paper_pasted = question_paper_text.strip()
+            answers_pasted = student_answers_text.strip()
+            n_images = int(is_image(paper_file)) + int(is_image(student_file))
+
+            if not (p_text or paper_pasted or is_image(paper_file)):
+                st.error("⚠️ The question paper is missing. Please upload it or paste the text.")
+            elif not (a_text or answers_pasted or is_image(student_file)):
+                st.error("⚠️ The student's answers are missing. Please upload them or paste the text.")
+            elif not allow_ai_call(units=1 + n_images):
+                pass
+            else:
+                with st.spinner("Checking the answers... please wait."):
+                    try:
+                        if is_image(paper_file):
+                            p_text = read_upload(paper_file, llm_cfg)
+                        if is_image(student_file):
+                            a_text = read_upload(student_file, llm_cfg)
+                        eval_res = evaluate_student_answers(llm_cfg, p_text or paper_pasted, a_text or answers_pasted)
+                        st.session_state["evaluation"] = eval_res
+                    except Exception as e:
+                        show_error(e)
+
+    if "evaluation" in st.session_state:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        with st.container(border=True, key="card_5"):
+            st.markdown('<div class="section-title">📋 Evaluation result</div>', unsafe_allow_html=True)
+            st.markdown(st.session_state["evaluation"])
+
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.download_button("⬇️ Download report (.txt)", data=st.session_state["evaluation"],
+                               file_name="WSA_Student_Evaluation.txt", mime="text/plain",
+                               use_container_width=True)
+        with col_d2:
+            eval_pdf = safe_download_data(create_pdf_from_text, "Student Evaluation Report",
+                                          st.session_state["evaluation"])
+            if eval_pdf:
+                st.download_button("⬇️ Download report (.pdf)", data=eval_pdf,
+                                   file_name="WSA_Student_Evaluation.pdf", mime="application/pdf",
+                                   use_container_width=True)
+        st.markdown('<div class="ai-note">AI marking can make mistakes. Please review important results yourself.</div>',
+                    unsafe_allow_html=True)
+
+
+# ============================================================
+# PAGE 3 — TEST DIAGNOSTIC
+# ============================================================
+
+elif page == "🎯 Test Diagnostic":
+    with st.container(border=True, key="card_6"):
+        st.markdown('<div class="section-title">Find strengths and weak areas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-hint">Upload or paste any solved test, question paper or result card to get a clear improvement plan.</div>',
+                    unsafe_allow_html=True)
+
+        col_diag1, col_diag2 = st.columns(2)
+        with col_diag1:
+            st.markdown("**📄 Test file or raw data**")
+            random_test_file = st.file_uploader(f"Upload test or result ({UPLOAD_HINT})",
+                                                type=UPLOAD_TYPES, key="random_test_up")
+            preview_if_image(random_test_file)
+            random_test_text = st.text_area("Or paste test content / scores", height=200,
+                                            key="random_test_text",
+                                            placeholder="e.g., Question 1: Incorrect answer selected...")
+
+        with col_diag2:
+            st.markdown("**⚙️ Goal (optional)**")
+            user_context = st.text_area("Target exam / student goal", height=270, key="user_context",
+                                        placeholder="e.g., Preparing for the BPSC Computer Science test. Target score is 80%+.")
+
+    if st.button("🔍 Analyze Test", type="primary", use_container_width=True):
+        if not has_any_key:
+            st.error(NO_KEY_MSG)
+        else:
+            extracted_test = process_uploaded_file(random_test_file)
+            pasted_test = random_test_text.strip()
+
+            if not (extracted_test or pasted_test or is_image(random_test_file)):
+                st.error("⚠️ Please upload a test file (PDF, DOCX, TXT or photo) or paste the text.")
+            elif not allow_ai_call(units=1 + int(is_image(random_test_file))):
+                pass
+            else:
+                with st.spinner("Analyzing the test and building your improvement plan..."):
+                    try:
+                        if is_image(random_test_file):
+                            extracted_test = read_upload(random_test_file, llm_cfg)
+                        diag_res = analyze_random_test(llm_cfg, extracted_test or pasted_test, user_context)
+                        st.session_state["diagnostic_analysis"] = diag_res
+                    except Exception as e:
+                        show_error(e)
+
+    if "diagnostic_analysis" in st.session_state:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        with st.container(border=True, key="card_7"):
+            st.markdown('<div class="section-title">📈 Diagnostic report and improvement plan</div>', unsafe_allow_html=True)
+            st.markdown(st.session_state["diagnostic_analysis"])
+
+        col_rd1, col_rd2 = st.columns(2)
+        with col_rd1:
+            st.download_button("⬇️ Download report (.txt)", data=st.session_state["diagnostic_analysis"],
+                               file_name="WSA_Test_Diagnostic.txt", mime="text/plain",
+                               use_container_width=True)
+        with col_rd2:
+            diag_pdf = safe_download_data(create_pdf_from_text, "Test Diagnostic & Improvement Plan",
+                                          st.session_state["diagnostic_analysis"])
+            if diag_pdf:
+                st.download_button("⬇️ Download report (.pdf)", data=diag_pdf,
+                                   file_name="WSA_Test_Diagnostic.pdf", mime="application/pdf",
+                                   use_container_width=True)
+        st.markdown('<div class="ai-note">AI analysis is a guide, not a final judgement. Please use your own judgement too.</div>',
+                    unsafe_allow_html=True)
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.markdown(
+    """<div class="branding-card">
+    <div class="hadith-quote">"Whoever travels a path in search of knowledge, Allah will make easy for him a path to Paradise."</div>
+    <div class="hadith-ref">— Prophet Muhammad (PBUH) | Sahih Muslim, Book 35, Hadith 6518</div>
+    <hr class="footer-divider">
+    <div class="branding-name">Designed by Waheed Ali Hamouzai</div>
+    <div class="branding-tag">WSA Educational Community • AI Powered Learning</div>
+</div>""",
+    unsafe_allow_html=True,
+)
