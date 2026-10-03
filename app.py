@@ -186,7 +186,7 @@ def show_error(e):
 
 
 # ============================================================
-# PWA — manifest + meta tags + install button
+# PWA — manifest + meta tags + green install instructions banner
 # ============================================================
 
 st.markdown(
@@ -201,80 +201,60 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Floating Install button (mobile only, top-right corner)
+# Green install-instructions banner (shows only on mobile browsers)
 st.markdown(
     """
-    <div id="pwa-install-wrap" style="display:none; position:fixed; top:72px; right:12px; z-index:9999;">
-        <button id="pwa-install-btn" style="
-            background:linear-gradient(135deg,#10B981 0%,#059669 100%);
-            color:#fff;
-            border:none;
-            border-radius:999px;
-            padding:11px 16px;
-            font-size:0.82rem;
-            font-weight:700;
-            cursor:pointer;
-            box-shadow:0 6px 18px -4px rgba(16,185,129,0.75);
-            font-family:system-ui,-apple-system,sans-serif;
-            display:flex;
-            align-items:center;
-            gap:6px;
-            line-height:1;
-        ">
-            <span style="font-size:1.05rem;">📲</span>
-            <span>Install</span>
-        </button>
+    <div id="install-banner" style="display:none; background:linear-gradient(135deg,#10B981 0%,#059669 100%);
+         color:#fff; border-radius:14px; padding:16px 18px; margin-bottom:16px;
+         box-shadow:0 6px 18px -6px rgba(16,185,129,0.6); font-family:system-ui,-apple-system,sans-serif;">
+
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+            <span style="font-size:1.6rem;">📲</span>
+            <div style="font-size:1.05rem; font-weight:800; letter-spacing:-0.2px;">
+                Install this app on your phone
+            </div>
+        </div>
+
+        <div id="install-android" style="display:none; font-size:0.9rem; line-height:1.7; opacity:0.98;">
+            <b>For Android (Chrome):</b><br>
+            1. Tap the <b>three dots (⋮)</b> at the top-right corner<br>
+            2. Tap <b>"Add to Home screen"</b> or <b>"Install app"</b><br>
+            3. Tap <b>"Install"</b> — the icon will appear on your home screen
+        </div>
+
+        <div id="install-ios" style="display:none; font-size:0.9rem; line-height:1.7; opacity:0.98;">
+            <b>For iPhone (Safari):</b><br>
+            1. Tap the <b>Share button (□↑)</b> at the bottom<br>
+            2. Scroll down and tap <b>"Add to Home Screen"</b><br>
+            3. Tap <b>"Add"</b> — the icon will appear on your home screen
+        </div>
+
+        <div style="margin-top:12px; font-size:0.78rem; opacity:0.85; border-top:1px solid rgba(255,255,255,0.25); padding-top:10px;">
+            💡 Tip: Once installed, the app opens full-screen — just like a real mobile app.
+        </div>
     </div>
 
     <script>
     (function() {
-        var deferredPrompt = null;
-        var btn = document.getElementById('pwa-install-btn');
-        var wrap = document.getElementById('pwa-install-wrap');
+        var banner = document.getElementById('install-banner');
+        var android = document.getElementById('install-android');
+        var ios = document.getElementById('install-ios');
 
-        var isStandalone = window.matchMedia('(display-mode: standalone)').matches
-                          || window.navigator.standalone === true;
         var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
         var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        var isAndroid = /Android/i.test(navigator.userAgent);
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                          || window.navigator.standalone === true;
 
-        if (!isMobile || isStandalone) return;
-
-        window.addEventListener('beforeinstallprompt', function(e) {
-            e.preventDefault();
-            deferredPrompt = e;
-            if (wrap) wrap.style.display = 'block';
-        });
-
-        // iOS Safari does not fire beforeinstallprompt -> show button after 1.5s
-        if (isIOS) {
-            setTimeout(function() {
-                if (wrap && !deferredPrompt) {
-                    var label = btn.querySelector('span:last-child');
-                    if (label) label.textContent = 'Add to Home';
-                    wrap.style.display = 'block';
-                }
-            }, 1500);
+        if (isMobile && !isStandalone && banner) {
+            banner.style.display = 'block';
+            if (isAndroid && android) android.style.display = 'block';
+            if (isIOS && ios) ios.style.display = 'block';
+            if (!isAndroid && !isIOS) {
+                if (android) android.style.display = 'block';
+                if (ios) ios.style.display = 'block';
+            }
         }
-
-        if (btn) {
-            btn.addEventListener('click', function() {
-                if (deferredPrompt) {
-                    deferredPrompt.prompt();
-                    deferredPrompt.userChoice.then(function(choice) {
-                        if (choice.outcome === 'accepted' && wrap) {
-                            wrap.style.display = 'none';
-                        }
-                        deferredPrompt = null;
-                    });
-                } else {
-                    alert('To install on iPhone:\\n\\n1. Tap the Share button (□↑) at the bottom\\n2. Scroll down and tap "Add to Home Screen"\\n3. Tap "Add"');
-                }
-            });
-        }
-
-        window.addEventListener('appinstalled', function() {
-            if (wrap) wrap.style.display = 'none';
-        });
     })();
     </script>
     """,
@@ -458,8 +438,7 @@ st.markdown(
             }
             .empty-state { padding: 22px 14px; }
             .empty-state-icon { font-size: 1.8rem; }
-            #pwa-install-wrap { top: 62px; right: 8px; }
-            #pwa-install-btn { padding: 9px 13px; font-size: .76rem; }
+            #install-banner { padding: 14px 14px !important; }
         }
         @media (max-width: 420px) {
             .block-container { padding-left: 10px; padding-right: 10px; }
