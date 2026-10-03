@@ -186,10 +186,7 @@ def show_error(e):
 
 
 # ============================================================
-# CUSTOM CSS
-# ============================================================
-# ============================================================
-# PWA — Make app installable on mobile home screen
+# PWA — manifest + meta tags + install button
 # ============================================================
 
 st.markdown(
@@ -203,6 +200,92 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Floating Install button (mobile only, top-right corner)
+st.markdown(
+    """
+    <div id="pwa-install-wrap" style="display:none; position:fixed; top:72px; right:12px; z-index:9999;">
+        <button id="pwa-install-btn" style="
+            background:linear-gradient(135deg,#10B981 0%,#059669 100%);
+            color:#fff;
+            border:none;
+            border-radius:999px;
+            padding:11px 16px;
+            font-size:0.82rem;
+            font-weight:700;
+            cursor:pointer;
+            box-shadow:0 6px 18px -4px rgba(16,185,129,0.75);
+            font-family:system-ui,-apple-system,sans-serif;
+            display:flex;
+            align-items:center;
+            gap:6px;
+            line-height:1;
+        ">
+            <span style="font-size:1.05rem;">📲</span>
+            <span>Install</span>
+        </button>
+    </div>
+
+    <script>
+    (function() {
+        var deferredPrompt = null;
+        var btn = document.getElementById('pwa-install-btn');
+        var wrap = document.getElementById('pwa-install-wrap');
+
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                          || window.navigator.standalone === true;
+        var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+        if (!isMobile || isStandalone) return;
+
+        window.addEventListener('beforeinstallprompt', function(e) {
+            e.preventDefault();
+            deferredPrompt = e;
+            if (wrap) wrap.style.display = 'block';
+        });
+
+        // iOS Safari does not fire beforeinstallprompt -> show button after 1.5s
+        if (isIOS) {
+            setTimeout(function() {
+                if (wrap && !deferredPrompt) {
+                    var label = btn.querySelector('span:last-child');
+                    if (label) label.textContent = 'Add to Home';
+                    wrap.style.display = 'block';
+                }
+            }, 1500);
+        }
+
+        if (btn) {
+            btn.addEventListener('click', function() {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    deferredPrompt.userChoice.then(function(choice) {
+                        if (choice.outcome === 'accepted' && wrap) {
+                            wrap.style.display = 'none';
+                        }
+                        deferredPrompt = null;
+                    });
+                } else {
+                    alert('To install on iPhone:\\n\\n1. Tap the Share button (□↑) at the bottom\\n2. Scroll down and tap "Add to Home Screen"\\n3. Tap "Add"');
+                }
+            });
+        }
+
+        window.addEventListener('appinstalled', function() {
+            if (wrap) wrap.style.display = 'none';
+        });
+    })();
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# CUSTOM CSS
+# ============================================================
+
 st.markdown(
     """
     <style>
@@ -319,19 +402,6 @@ st.markdown(
         .section-hint { font-size: 0.86rem; color: var(--muted); margin-bottom: 8px; }
         .ai-note { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 6px; }
 
-        /* ---------- Step indicator ---------- */
-        .step-chip {
-            display: inline-block;
-            background: #EEF4FF;
-            color: var(--navy);
-            border: 1px solid #C7D5F0;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            margin-right: 6px;
-        }
-
         /* ---------- Empty state ---------- */
         .empty-state {
             background: #F8FAFF;
@@ -388,6 +458,8 @@ st.markdown(
             }
             .empty-state { padding: 22px 14px; }
             .empty-state-icon { font-size: 1.8rem; }
+            #pwa-install-wrap { top: 62px; right: 8px; }
+            #pwa-install-btn { padding: 9px 13px; font-size: .76rem; }
         }
         @media (max-width: 420px) {
             .block-container { padding-left: 10px; padding-right: 10px; }
